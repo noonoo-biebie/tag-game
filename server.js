@@ -45,13 +45,20 @@ function checkItemCollection(playerId) {
 
         // 30px 이내 접근 시 획득 (판정 범위 완화)
         if (dist < 30) {
-            if (player.hasItem) return;
+            if (player.hasItem) return; // Already has an item
+
+            // 아이템 획득 시 기존 쉴드 해제
+            if (player.hasShield) {
+                player.hasShield = false;
+                io.to(playerId).emit('itemEffect', { type: 'shield', on: false });
+                io.emit('gameMessage', `[${player.nickname}] 님의 방어막이 새 아이템 획득으로 사라졌습니다.`);
+            }
 
             player.hasItem = item.type;
-            delete items[itemId];
+            delete items[itemId]; // Remove from map
 
-            io.emit('updateItems', items);
-            io.to(playerId).emit('updateInventory', player.hasItem);
+            io.emit('updateItems', items); // Update clients on item removal
+            io.to(playerId).emit('updateInventory', player.hasItem); // Update player's inventory
             io.emit('gameMessage', `[${player.nickname}] 님이 [${item.type}] 획득!`);
             console.log(`아이템 획득: ${player.nickname} -> ${item.type}`);
             break;
@@ -128,6 +135,7 @@ io.on('connection', (socket) => {
         socket.emit('joinSuccess', players[socket.id]);
         socket.emit('currentPlayers', players);
         socket.emit('updateItems', items); // 아이템 상태 전송
+        socket.emit('updateTraps', traps); // 트랩 상태 전송
         socket.emit('updateTagger', taggerId);
 
         socket.broadcast.emit('newPlayer', players[socket.id]);
@@ -140,6 +148,7 @@ io.on('connection', (socket) => {
             io.emit('playerMoved', players[socket.id]);
             checkCollision(socket.id);
             checkItemCollection(socket.id);
+            checkTrapCollision(socket.id); // 트랩 체크
         }
     });
 
@@ -189,6 +198,10 @@ io.on('connection', (socket) => {
 // 충돌(태그) 판정 (쿨타임 적용)
 let canTag = true;
 
+// 트랩(바나나) 시스템
+let traps = {};
+let trapNextId = 1;
+
 function handleItemEffect(playerId, itemType) {
     const player = players[playerId];
     io.emit('gameMessage', `[${player.nickname}] 님이 [${itemType}] 사용!`);
@@ -199,6 +212,45 @@ function handleItemEffect(playerId, itemType) {
         player.hasShield = true;
         io.to(playerId).emit('itemEffect', { type: 'shield', on: true });
         // 방어막은 시간 제한 없이 태그 당할 때까지 유지 (혹은 시간 제한 둘 수도 있음)
+    } else if (itemType === 'banana') {
+        const id = trapNextId++;
+        traps[id] = {
+            x: player.x,
+            y: player.y,
+            type: 'banana',
+            ownerId: playerId, // 설치자 ID 저장
+            createdAt: Date.now() // 생성 시간 저장
+        };
+        io.emit('updateTraps', traps);
+        io.emit('gameMessage', `[${player.nickname}] 님이 바나나 함정을 설치했습니다! 🍌`);
+    }
+}
+
+function checkTrapCollision(playerId) {
+    const player = players[playerId];
+    if (!player) return;
+
+    for (const id in traps) {
+        const trap = traps[id];
+
+        // 설치자는 3초 동안 자신의 트랩에 걸리지 않음
+        if (trap.ownerId === playerId && Date.now() - trap.createdAt < 3000) {
+            continue;
+        }
+
+        const dx = player.x - trap.x;
+        const dy = player.y - trap.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < 20) { // 트랩 밟음
+            delete traps[id];
+            io.emit('updateTraps', traps);
+            io.emit('gameMessage', `[${player.nickname}] 님이 바나나를 밟고 미끄러집니다! 으악!`);
+
+            // 미끄러짐 효과 전송 (2초)
+            io.to(playerId).emit('playerSlipped', { duration: 2000 });
+            break;
+        }
     }
 }
 

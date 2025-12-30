@@ -31,6 +31,11 @@ let taggerId = null;
 const BASE_SPEED = 240;
 let speedMultiplier = 1.0;
 
+// 트랩 및 상태 변수
+let traps = {};
+let isSlipped = false;
+let slipVelocity = { x: 0, y: 0 };
+
 // --- 로그인(입장) 로직 ---
 
 startBtn.addEventListener('click', () => {
@@ -114,6 +119,10 @@ socket.on('updateItems', (serverItems) => {
     items = serverItems;
 });
 
+socket.on('updateTraps', (serverTraps) => {
+    traps = serverTraps;
+});
+
 socket.on('updateInventory', (itemType) => {
     myItem = itemType;
 });
@@ -122,7 +131,42 @@ socket.on('itemEffect', (data) => {
     if (data.type === 'speed') {
         speedMultiplier = 1.5;
         setTimeout(() => { speedMultiplier = 1.0; }, data.duration);
+    } else if (data.type === 'shield') {
+        // UI 효과 등 필요하면 추가
     }
+});
+
+socket.on('playerSlipped', (data) => {
+    isSlipped = true;
+
+    // 현재 이동 중이던 방향 유지 (없으면 랜덤?)
+    // processInput에서 계산된 최근 dx, dy를 저장해두거나 여기서 임의 설정
+    // 간단히: 최근 입력 키를 기반으로 방향 추정 or 랜덤
+    let dx = 0, dy = 0;
+    if (keys['arrowup'] || keys['w']) dy = -1;
+    else if (keys['arrowdown'] || keys['s']) dy = 1;
+    else if (keys['arrowleft'] || keys['a']) dx = -1;
+    else if (keys['arrowright'] || keys['d']) dx = 1;
+
+    // 정지 상태였다면 랜덤 방향으로 미끄러짐 (꿀잼 요소)
+    if (dx === 0 && dy === 0) {
+        const dirs = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
+        const rand = dirs[Math.floor(Math.random() * dirs.length)];
+        dx = rand.x; dy = rand.y;
+    }
+
+    // 정규화
+    if (dx !== 0 && dy !== 0) {
+        const len = Math.sqrt(dx * dx + dy * dy);
+        dx /= len; dy /= len;
+    }
+
+    slipVelocity = { x: dx, y: dy };
+
+    setTimeout(() => {
+        isSlipped = false;
+        slipVelocity = { x: 0, y: 0 };
+    }, data.duration);
 });
 
 socket.on('gameMessage', (msg) => {
@@ -216,6 +260,16 @@ function drawItems() {
     for (const id in items) {
         const item = items[id];
         ctx.fillText('🎁', item.x + TILE_SIZE / 2, item.y + TILE_SIZE / 2);
+    }
+}
+
+function drawTraps() {
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const id in traps) {
+        const trap = traps[id];
+        ctx.fillText('🍌', trap.x + TILE_SIZE / 2, trap.y + TILE_SIZE / 2);
     }
 }
 
@@ -340,14 +394,22 @@ function processInput(deltaTimeSec) {
     if (!isJoined || !players[socket.id]) return;
 
     let dx = 0; let dy = 0;
-    if (keys['arrowup'] || keys['w']) dy = -1;
-    if (keys['arrowdown'] || keys['s']) dy = 1;
-    if (keys['arrowleft'] || keys['a']) dx = -1;
-    if (keys['arrowright'] || keys['d']) dx = 1;
 
-    if (dx !== 0 && dy !== 0) {
-        const len = Math.sqrt(dx * dx + dy * dy);
-        dx /= len; dy /= len;
+    if (isSlipped) {
+        // 미끄러지는 중: 키 입력 무시, 강제 이동
+        dx = slipVelocity.x;
+        dy = slipVelocity.y;
+    } else {
+        // 정상 상태
+        if (keys['arrowup'] || keys['w']) dy = -1;
+        if (keys['arrowdown'] || keys['s']) dy = 1;
+        if (keys['arrowleft'] || keys['a']) dx = -1;
+        if (keys['arrowright'] || keys['d']) dx = 1;
+
+        if (dx !== 0 && dy !== 0) {
+            const len = Math.sqrt(dx * dx + dy * dy);
+            dx /= len; dy /= len;
+        }
     }
 
     const myPlayer = players[socket.id];
@@ -357,6 +419,7 @@ function processInput(deltaTimeSec) {
         let currentSpeed = BASE_SPEED * speedMultiplier;
         let remainingDist = currentSpeed * deltaTimeSec;
         const STEP_SIZE = 4;
+        let hitWall = false; // 벽 충돌 여부 체크
 
         while (remainingDist > 0) {
             const step = Math.min(remainingDist, STEP_SIZE);
@@ -364,8 +427,29 @@ function processInput(deltaTimeSec) {
             let nextX = myPlayer.x + dx * step;
             let nextY = myPlayer.y + dy * step;
 
-            if (!checkWallCollision(nextX, myPlayer.y)) myPlayer.x = nextX;
-            if (!checkWallCollision(myPlayer.x, nextY)) myPlayer.y = nextY;
+            let movedX = false;
+            let movedY = false;
+
+            if (!checkWallCollision(nextX, myPlayer.y)) {
+                myPlayer.x = nextX;
+                movedX = true;
+            }
+            if (!checkWallCollision(myPlayer.x, nextY)) {
+                myPlayer.y = nextY;
+                movedY = true;
+            }
+
+            // 미끄러지는 상태에서 벽에 부딪히면(이동 실패하면) 즉시 정지
+            if (isSlipped && (!movedX || !movedY)) {
+                hitWall = true;
+                break;
+            }
+        }
+
+        if (isSlipped && hitWall) {
+            isSlipped = false;
+            slipVelocity = { x: 0, y: 0 };
+            // (옵션) 효과음이나 파티클 추가 가능
         }
 
         myPlayer.targetX = myPlayer.x;
@@ -407,6 +491,7 @@ function update(timestamp) {
 
     drawMap();
     drawItems();     // 아이템 그리기
+    drawTraps();     // 트랩 그리기
     drawPlayers();
     drawInventory(); // 인벤토리 그리기
 
