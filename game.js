@@ -36,6 +36,33 @@ let traps = {};
 let isSlipped = false;
 let slipVelocity = { x: 0, y: 0 };
 
+// 피드백 UI 로직
+const feedbackBtn = document.getElementById('feedback-btn');
+const feedbackModal = document.getElementById('feedback-modal');
+const feedbackInput = document.getElementById('feedback-input');
+const feedbackSend = document.getElementById('feedback-send');
+const feedbackCancel = document.getElementById('feedback-cancel');
+
+feedbackBtn.addEventListener('click', () => {
+    feedbackModal.style.display = 'flex';
+    feedbackInput.focus();
+});
+
+feedbackCancel.addEventListener('click', () => {
+    feedbackModal.style.display = 'none';
+    feedbackInput.value = '';
+});
+
+feedbackSend.addEventListener('click', () => {
+    const msg = feedbackInput.value.trim();
+    if (msg) {
+        socket.emit('sendFeedback', msg);
+        alert('소중한 의견 감사합니다! 🙇‍♂️');
+        feedbackModal.style.display = 'none';
+        feedbackInput.value = '';
+    }
+});
+
 // --- 로그인(입장) 로직 ---
 
 startBtn.addEventListener('click', () => {

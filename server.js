@@ -4,6 +4,7 @@ const http = require('http');
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 const io = new Server(server);
+const fs = require('fs');
 
 app.use(express.static(__dirname));
 
@@ -119,6 +120,18 @@ function setupSocketEvents(socket) {
     socket.on('useItem', () => handleUseItem(socket));
     socket.on('disconnect', () => handleDisconnect(socket));
     socket.on('chatMessage', (msg) => handleChatMessage(socket, msg));
+    socket.on('sendFeedback', (msg) => handleFeedback(socket, msg));
+}
+
+function handleFeedback(socket, msg) {
+    if (!players[socket.id]) return;
+    const nickname = players[socket.id].nickname;
+    const logEntry = `[${new Date().toISOString()}] ${nickname}: ${msg}\n`;
+
+    fs.appendFile('feedback.txt', logEntry, (err) => {
+        if (err) console.error('Feedback save failed:', err);
+        else console.log('Feedback saved:', logEntry.trim());
+    });
 }
 
 function handleJoinGame(socket, data) {

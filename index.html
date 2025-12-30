@@ -63,6 +63,27 @@
         </div>
     </div>
 
+    <!-- 피드백 버튼 & 모달 -->
+    <button id="feedback-btn"
+        style="position: fixed; bottom: 20px; right: 20px; padding: 10px 15px; border-radius: 20px; border: none; background: #e67e22; color: white; font-weight: bold; cursor: pointer; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">📢
+        피드백</button>
+
+    <div id="feedback-modal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center;">
+        <div
+            style="background: #34495e; padding: 20px; border-radius: 10px; width: 300px; text-align: center; color: white;">
+            <h3>📬 개발자에게 의견 보내기</h3>
+            <textarea id="feedback-input" placeholder="버그 제보나 아이디어를 적어주세요!"
+                style="width: 100%; height: 100px; margin: 10px 0; padding: 5px; border-radius: 5px;"></textarea>
+            <div style="display: flex; justify-content: space-between;">
+                <button id="feedback-cancel"
+                    style="background: #95a5a6; border: none; padding: 8px 15px; border-radius: 5px; color: white; cursor: pointer;">취소</button>
+                <button id="feedback-send"
+                    style="background: #2ecc71; border: none; padding: 8px 15px; border-radius: 5px; color: white; cursor: pointer;">전송</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Socket.io 라이브러리 로드 -->
     <script src="/socket.io/socket.io.js"></script>
     <script src="game.js"></script>
