@@ -74,14 +74,22 @@ const map = [
 
 // 접속한 모든 플레이어 정보
 let players = {};
+let taggerId = null; // 클라이언트가 알고 있는 현재 술래 ID
 
-// 서버로부터 전체 플레이어 목록 수신
+// HTML 요소
+const gameMessage = document.getElementById('game-message');
+
+// 서버로부터 정보 수신
 socket.on('currentPlayers', (serverPlayers) => {
     players = serverPlayers;
     update();
 });
 
-// 새 플레이어 접속 또는 이동 정보 수신
+socket.on('updateTagger', (id) => {
+    taggerId = id;
+    update();
+});
+
 socket.on('playerMoved', (playerInfo) => {
     players[playerInfo.playerId] = playerInfo;
     update();
@@ -92,10 +100,26 @@ socket.on('newPlayer', (playerInfo) => {
     update();
 });
 
-// 플레이어 접속 해제
 socket.on('disconnectPlayer', (playerId) => {
     delete players[playerId];
     update();
+});
+
+socket.on('gameMessage', (msg) => {
+    gameMessage.innerText = msg;
+    // 3초 후 메시지 초기화 (선택)
+    setTimeout(() => {
+        gameMessage.innerText = '달리고 잡기 v0.3';
+    }, 5000);
+});
+
+// 태그 효과 (화면 깜빡임 등)
+socket.on('tagOccurred', (data) => {
+    // 배경을 잠깐 빨갛게?
+    document.body.style.backgroundColor = '#c0392b';
+    setTimeout(() => {
+        document.body.style.backgroundColor = '#2c3e50';
+    }, 200);
 });
 
 function drawMap() {
@@ -115,10 +139,25 @@ function drawMap() {
 function drawPlayers() {
     Object.keys(players).forEach((id) => {
         const p = players[id];
+
         ctx.fillStyle = p.color;
+
+        // 1. 플레이어 그리기
         ctx.fillRect(p.x, p.y, TILE_SIZE, TILE_SIZE);
 
-        // 내 캐릭터 강조
+        // 2. 술래라면 빨간 테두리 + 왕관 표시?
+        if (id === taggerId) {
+            ctx.strokeStyle = '#e74c3c'; // 진한 빨강 테두리
+            ctx.lineWidth = 4;
+            ctx.strokeRect(p.x, p.y, TILE_SIZE, TILE_SIZE);
+
+            // 텍스트 표시 '술래'
+            ctx.fillStyle = '#fff';
+            ctx.font = '12px Arial';
+            ctx.fillText('술래', p.x + 4, p.y - 5);
+        }
+
+        // 3. 내 캐릭터 표시 (흰색 얇은 테두리)
         if (id === socket.id) {
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 2;
