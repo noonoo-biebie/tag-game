@@ -110,90 +110,99 @@ function getRandomSpawn() {
 
 io.on('connection', (socket) => {
     console.log('클라이언트 접속:', socket.id);
+    setupSocketEvents(socket);
+});
 
-    socket.on('joinGame', (data) => {
-        if (players[socket.id]) return;
+function setupSocketEvents(socket) {
+    socket.on('joinGame', (data) => handleJoinGame(socket, data));
+    socket.on('playerMove', (data) => handlePlayerMove(socket, data));
+    socket.on('useItem', () => handleUseItem(socket));
+    socket.on('disconnect', () => handleDisconnect(socket));
+    socket.on('chatMessage', (msg) => handleChatMessage(socket, msg));
+}
 
-        console.log('게임 입장:', data.nickname);
+function handleJoinGame(socket, data) {
+    if (players[socket.id]) return;
 
-        const spawnPos = getRandomSpawn();
-        players[socket.id] = {
-            x: spawnPos.x,
-            y: spawnPos.y,
-            playerId: socket.id,
-            color: data.color || '#e74c3c',
-            nickname: data.nickname || '익명'
-        };
+    console.log('게임 입장:', data.nickname);
 
-        if (!taggerId) {
-            taggerId = socket.id;
-            io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 첫 술래입니다!`);
-        } else {
-            io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 입장했습니다.`);
-        }
+    const spawnPos = getRandomSpawn();
+    players[socket.id] = {
+        x: spawnPos.x,
+        y: spawnPos.y,
+        playerId: socket.id,
+        color: data.color || '#e74c3c',
+        nickname: data.nickname || '익명'
+    };
 
-        socket.emit('joinSuccess', players[socket.id]);
-        socket.emit('currentPlayers', players);
-        socket.emit('updateItems', items); // 아이템 상태 전송
-        socket.emit('updateTraps', traps); // 트랩 상태 전송
-        socket.emit('updateTagger', taggerId);
+    if (!taggerId) {
+        taggerId = socket.id;
+        io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 첫 술래입니다!`);
+    } else {
+        io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 입장했습니다.`);
+    }
 
-        socket.broadcast.emit('newPlayer', players[socket.id]);
-    });
+    socket.emit('joinSuccess', players[socket.id]);
+    socket.emit('currentPlayers', players);
+    socket.emit('updateItems', items); // 아이템 상태 전송
+    socket.emit('updateTraps', traps); // 트랩 상태 전송
+    socket.emit('updateTagger', taggerId);
 
-    socket.on('playerMove', (movementData) => {
-        if (players[socket.id]) {
-            players[socket.id].x = movementData.x;
-            players[socket.id].y = movementData.y;
-            io.emit('playerMoved', players[socket.id]);
-            checkCollision(socket.id);
-            checkItemCollection(socket.id);
-            checkTrapCollision(socket.id); // 트랩 체크
-        }
-    });
+    socket.broadcast.emit('newPlayer', players[socket.id]);
+}
 
-    socket.on('useItem', () => {
-        const player = players[socket.id];
-        if (player && player.hasItem) {
-            const itemType = player.hasItem;
-            player.hasItem = null;
-            io.to(socket.id).emit('updateInventory', null);
-            handleItemEffect(socket.id, itemType);
-        }
-    });
+function handlePlayerMove(socket, movementData) {
+    if (players[socket.id]) {
+        players[socket.id].x = movementData.x;
+        players[socket.id].y = movementData.y;
+        io.emit('playerMoved', players[socket.id]);
+        checkCollision(socket.id);
+        checkItemCollection(socket.id);
+        checkTrapCollision(socket.id); // 트랩 체크
+    }
+}
 
-    socket.on('disconnect', () => {
-        if (players[socket.id]) {
-            console.log('플레이어 퇴장:', players[socket.id].nickname);
-            const leftNickname = players[socket.id].nickname;
-            delete players[socket.id];
-            io.emit('disconnectPlayer', socket.id);
-            io.emit('gameMessage', `[${leftNickname}] 님이 나갔습니다.`);
+function handleUseItem(socket) {
+    const player = players[socket.id];
+    if (player && player.hasItem) {
+        const itemType = player.hasItem;
+        player.hasItem = null;
+        io.to(socket.id).emit('updateInventory', null);
+        handleItemEffect(socket.id, itemType);
+    }
+}
 
-            if (socket.id === taggerId) {
-                const remainingIds = Object.keys(players);
-                if (remainingIds.length > 0) {
-                    taggerId = remainingIds[Math.floor(Math.random() * remainingIds.length)];
-                    io.emit('updateTagger', taggerId);
-                    io.emit('gameMessage', `술래가 나가서 [${players[taggerId].nickname}] 님이 새 술래가 됩니다!`);
-                } else {
-                    taggerId = null;
-                }
+function handleDisconnect(socket) {
+    if (players[socket.id]) {
+        console.log('플레이어 퇴장:', players[socket.id].nickname);
+        const leftNickname = players[socket.id].nickname;
+        delete players[socket.id];
+        io.emit('disconnectPlayer', socket.id);
+        io.emit('gameMessage', `[${leftNickname}] 님이 나갔습니다.`);
+
+        if (socket.id === taggerId) {
+            const remainingIds = Object.keys(players);
+            if (remainingIds.length > 0) {
+                taggerId = remainingIds[Math.floor(Math.random() * remainingIds.length)];
+                io.emit('updateTagger', taggerId);
+                io.emit('gameMessage', `술래가 나가서 [${players[taggerId].nickname}] 님이 새 술래가 됩니다!`);
+            } else {
+                taggerId = null;
             }
         }
-    });
+    }
+}
 
-    socket.on('chatMessage', (msg) => {
-        if (players[socket.id]) {
-            const nickname = players[socket.id].nickname;
-            io.emit('chatMessage', {
-                nickname: nickname,
-                message: msg,
-                playerId: socket.id
-            });
-        }
-    });
-});
+function handleChatMessage(socket, msg) {
+    if (players[socket.id]) {
+        const nickname = players[socket.id].nickname;
+        io.emit('chatMessage', {
+            nickname: nickname,
+            message: msg,
+            playerId: socket.id
+        });
+    }
+}
 
 // 충돌(태그) 판정 (쿨타임 적용)
 let canTag = true;
@@ -204,6 +213,8 @@ let trapNextId = 1;
 
 function handleItemEffect(playerId, itemType) {
     const player = players[playerId];
+    if (!player) return; // Disconnect check inside effect
+
     io.emit('gameMessage', `[${player.nickname}] 님이 [${itemType}] 사용!`);
 
     if (itemType === 'speed') {
@@ -213,9 +224,9 @@ function handleItemEffect(playerId, itemType) {
 
         // 5초 후 효과 해제 및 알림
         setTimeout(() => {
-            if (player) { // 플레이어가 여전히 접속 중이면
-                player.isSpeeding = false;
-                io.emit('playerMoved', player);
+            if (players[playerId]) { // Check existence again
+                players[playerId].isSpeeding = false;
+                io.emit('playerMoved', players[playerId]);
             }
         }, 5000);
 
