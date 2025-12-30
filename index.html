@@ -9,14 +9,40 @@
 </head>
 
 <body>
-    <div id="game-container">
-        <h1>달리고 잡기 v0.1</h1>
-        <div id="game-message">게임을 시작합니다!</div>
-        <canvas id="gameCanvas" width="640" height="480"></canvas>
-        <p>방향키(↑, ↓, ←, →)를 사용하여 움직이세요.</p>
-        <div id="error-log"></div>
+    <!-- 닉네임 입력 화면 -->
+    <div id="login-screen">
+        <h1>달리고 잡기 v0.4</h1>
+        <div style="margin-bottom: 20px;">
+            <input type="text" id="nickname-input" placeholder="닉네임 (최대 10자)" maxlength="10">
+            <input type="color" id="color-input" value="#e74c3c" title="캐릭터 색상 선택">
+        </div>
+        <button id="start-btn">게임 시작</button>
     </div>
-    <div id="status-indicator" title="서버 연결 상태"></div>
+
+    <!-- 게임 화면 -->
+    <div id="game-container" style="display: none;">
+        <h1>달리고 잡기</h1>
+        <div id="game-message">게임을 시작합니다!</div>
+
+        <div id="main-content" style="display: flex; gap: 20px; justify-content: center; align-items: flex-start;">
+            <!-- 게임 캔버스 -->
+            <div>
+                <canvas id="gameCanvas" width="640" height="480"></canvas>
+                <p>방향키(WASD)를 사용하여 움직이세요.</p>
+            </div>
+
+            <!-- 채팅창 -->
+            <div id="chat-container">
+                <div id="chat-messages"></div>
+                <input type="text" id="chat-input" placeholder="메시지 입력 (Enter)" maxlength="50">
+            </div>
+        </div>
+
+        <div id="error-log"></div>
+        <div id="status-indicator"></div>
+    </div>
+
+    <!-- Socket.io 라이브러리 로드 -->
     <script src="/socket.io/socket.io.js"></script>
     <script src="game.js"></script>
 </body>

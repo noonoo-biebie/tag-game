@@ -65,3 +65,89 @@ p {
     font-weight: bold;
     height: 30px;
 }
+
+/* 로그인 화면 스타일 */
+#login-screen {
+    text-align: center;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 40px;
+    border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+}
+
+#nickname-input {
+    padding: 10px;
+    font-size: 1.2rem;
+    border: none;
+    border-radius: 5px;
+    margin-right: 10px;
+}
+
+#start-btn {
+    padding: 10px 20px;
+    font-size: 1.2rem;
+    background-color: #f1c40f;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    color: #2c3e50;
+}
+
+#start-btn:hover {
+    background-color: #f39c12;
+}
+
+#color-input {
+    width: 50px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    vertical-align: middle;
+}
+
+/* 채팅창 스타일 */
+#chat-container {
+    width: 250px;
+    height: 480px;
+    background-color: rgba(0, 0, 0, 0.5);
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+#chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 10px;
+    text-align: left;
+    color: #ecf0f1;
+    font-size: 14px;
+    word-wrap: break-word;
+}
+
+#chat-messages div {
+    margin-bottom: 5px;
+}
+
+#chat-input {
+    padding: 8px;
+    border-radius: 4px;
+    border: none;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+/* 스크롤바 커스텀 */
+#chat-messages::-webkit-scrollbar {
+    width: 8px;
+}
+#chat-messages::-webkit-scrollbar-thumb {
+    background: #7f8c8d;
+    border-radius: 4px;
+}

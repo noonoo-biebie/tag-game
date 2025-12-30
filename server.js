@@ -12,77 +12,93 @@ app.get('/', (req, res) => {
 });
 
 let players = {};
-let taggerId = null; // 현재 술래의 ID
-
-// 기본 타일 크기 (충돌 판정용)
+let taggerId = null;
 const TILE_SIZE = 32;
 
 io.on('connection', (socket) => {
-    console.log('플레이어 접속:', socket.id);
+    console.log('클라이언트 접속:', socket.id);
 
-    // 새 플레이어 정보 생성
-    players[socket.id] = {
-        x: Math.floor(Math.random() * 10) * TILE_SIZE + TILE_SIZE, // 랜덤 시작 위치
-        y: Math.floor(Math.random() * 10) * TILE_SIZE + TILE_SIZE,
-        playerId: socket.id,
-        // 랜덤 파스텔톤 색상
-        color: `hsl(${Math.random() * 360}, 70%, 60%)`
-    };
+    // 주의: 접속했다고 바로 플레이어를 생성하지 않음!
+    // 'joinGame' 이벤트를 받아야 생성함.
 
-    // 술래가 없으면 이 사람이 술래
-    if (!taggerId) {
-        taggerId = socket.id;
-        io.emit('gameMessage', '새로운 술래가 지정되었습니다!');
-    }
+    socket.on('joinGame', (data) => {
+        // 이미 접속 중이면 무시
+        if (players[socket.id]) return;
 
-    // 접속한 전원에게 현재 상황 전송
-    io.emit('currentPlayers', players);
-    io.emit('updateTagger', taggerId);
+        console.log('게임 입장:', data.nickname);
 
-    // 플레이어 이동
+        players[socket.id] = {
+            x: Math.floor(Math.random() * 10) * TILE_SIZE + TILE_SIZE,
+            y: Math.floor(Math.random() * 10) * TILE_SIZE + TILE_SIZE,
+            playerId: socket.id,
+            color: data.color || '#e74c3c', // 유저가 선택한 색상
+            nickname: data.nickname || '익명' // 닉네임
+        };
+
+        // 술래가 없으면 이 사람이 술래
+        if (!taggerId) {
+            taggerId = socket.id;
+            io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 첫 술래입니다!`);
+        } else {
+            io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 입장했습니다.`);
+        }
+
+        // 1. 나에게 현재 상태 전송 (입장 수락의 의미)
+        socket.emit('joinSuccess', players[socket.id]);
+        socket.emit('currentPlayers', players);
+        socket.emit('updateTagger', taggerId);
+
+        // 2. 다른 사람들에게 내 등장 알림
+        socket.broadcast.emit('newPlayer', players[socket.id]);
+    });
+
     socket.on('playerMove', (movementData) => {
         if (players[socket.id]) {
             players[socket.id].x = movementData.x;
             players[socket.id].y = movementData.y;
-
-            // 모든 클라이언트에게 이동 알림
             io.emit('playerMoved', players[socket.id]);
-
-            // 충돌 감지 로직 (서버 권한 타일 기반 판정)
             checkCollision(socket.id);
         }
     });
 
     socket.on('disconnect', () => {
-        console.log('플레이어 접속 해제:', socket.id);
-        delete players[socket.id];
-        io.emit('disconnectPlayer', socket.id);
+        if (players[socket.id]) {
+            console.log('플레이어 퇴장:', players[socket.id].nickname);
+            const leftNickname = players[socket.id].nickname;
+            delete players[socket.id];
+            io.emit('disconnectPlayer', socket.id);
+            io.emit('gameMessage', `[${leftNickname}] 님이 나갔습니다.`);
 
-        // 만약 술래가 나갔다면
-        if (socket.id === taggerId) {
-            const remainingIds = Object.keys(players);
-            if (remainingIds.length > 0) {
-                // 남은 사람 중 랜덤으로 술래 지정
-                taggerId = remainingIds[Math.floor(Math.random() * remainingIds.length)];
-                io.emit('updateTagger', taggerId);
-                io.emit('gameMessage', '술래가 나갔습니다. 새 술래가 지정됩니다!');
-            } else {
-                taggerId = null;
+            if (socket.id === taggerId) {
+                const remainingIds = Object.keys(players);
+                if (remainingIds.length > 0) {
+                    taggerId = remainingIds[Math.floor(Math.random() * remainingIds.length)];
+                    io.emit('updateTagger', taggerId);
+                    io.emit('gameMessage', `술래가 나가서 [${players[taggerId].nickname}] 님이 새 술래가 됩니다!`);
+                } else {
+                    taggerId = null;
+                }
             }
+        }
+    });
+    socket.on('chatMessage', (msg) => {
+        if (players[socket.id]) {
+            const nickname = players[socket.id].nickname;
+            console.log(`[채팅] ${nickname}: ${msg}`);
+            // 모든 클라이언트에게 메시지 전송 (누가 보냈는지 포함)
+            io.emit('chatMessage', {
+                nickname: nickname,
+                message: msg,
+                playerId: socket.id
+            });
         }
     });
 });
 
 // 충돌(태그) 판정 함수
 function checkCollision(moverId) {
-    // 플레이어가 2명 미만이면 잡기 로직 필요 없음
     const ids = Object.keys(players);
     if (ids.length < 2) return;
-
-    // 움직인 사람이 술래라면 -> 일반인을 잡았는지 체크
-    // 움직인 사람이 일반인인데 -> 술래에게 들이박았는지(자살) 체크
-
-    // 간단하게: 술래와 다른 누군가 겹쳤는지 확인
     if (!taggerId || !players[taggerId]) return;
 
     const tagger = players[taggerId];
@@ -90,15 +106,12 @@ function checkCollision(moverId) {
     for (const id of ids) {
         if (id !== taggerId) {
             const runner = players[id];
-            // 같은 칸에 있으면 잡힌 것으로 간주 (정확히 좌표가 같을 때)
             if (tagger.x === runner.x && tagger.y === runner.y) {
-                // 태그 발생! 술래 교체
-                taggerId = id; // 잡힌 사람이 새 술래
-
+                taggerId = id;
                 io.emit('updateTagger', taggerId);
                 io.emit('tagOccurred', { newTaggerId: taggerId });
-                io.emit('gameMessage', '잡혔습니다! 술래가 바뀝니다!');
-                break; // 한 번에 한 명만 잡음
+                io.emit('gameMessage', `[${tagger.nickname}] -> [${runner.nickname}] 태그! 술래 변경!`);
+                break;
             }
         }
     }
