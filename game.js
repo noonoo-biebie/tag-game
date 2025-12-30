@@ -20,20 +20,24 @@ const chatMessages = document.getElementById('chat-messages');
 // 게임 상태 변수
 let isJoined = false;
 let players = {};
+let items = {};
+let myItem = null;
 let taggerId = null;
+
+// 속도 관련 변수
+const BASE_SPEED = 240;
+let speedMultiplier = 1.0;
 
 // --- 로그인(입장) 로직 ---
 
 startBtn.addEventListener('click', () => {
     let nickname = nicknameInput.value.trim();
     if (!nickname) {
-        // 닉네임 안 쓰면 랜덤 생성 (테스트 편의성)
         nickname = 'Player' + Math.floor(Math.random() * 1000);
     }
     socket.emit('joinGame', { nickname: nickname, color: colorInput.value });
 });
 
-// 채팅 전송 로직
 chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
         const msg = chatInput.value.trim();
@@ -44,16 +48,12 @@ chatInput.addEventListener('keydown', (e) => {
     }
 });
 
-// 서버가 입장을 허락하면 화면 전환
 socket.on('joinSuccess', (myInfo) => {
     isJoined = true;
     loginScreen.style.display = 'none';
     gameContainer.style.display = 'block';
-
-    // 포커스를 캔버스나 바디로 돌려서 키 입력을 바로 받을 수 있게 함
     document.body.focus();
 
-    // 루프 시작 (이미 돌고 있을 수 있으나 확실하게)
     if (!loopRunning) {
         loopRunning = true;
         requestAnimationFrame(update);
@@ -77,19 +77,15 @@ socket.on('updateTagger', (id) => {
 });
 
 socket.on('playerMoved', (playerInfo) => {
-    // 내 정보는 무시 (클라이언트 예측 이동 사용)
     if (playerInfo.playerId === socket.id) return;
 
     if (!players[playerInfo.playerId]) {
-        // 새로 온 플레이어
         players[playerInfo.playerId] = playerInfo;
         players[playerInfo.playerId].targetX = playerInfo.x;
         players[playerInfo.playerId].targetY = playerInfo.y;
     } else {
-        // 기존 플레이어: 목표 위치(Target)만 갱신 -> update()에서 보간 이동
         players[playerInfo.playerId].targetX = playerInfo.x;
         players[playerInfo.playerId].targetY = playerInfo.y;
-        // 닉네임, 색상 등은 동기화
         players[playerInfo.playerId].color = playerInfo.color;
         players[playerInfo.playerId].nickname = playerInfo.nickname;
     }
@@ -105,11 +101,27 @@ socket.on('disconnectPlayer', (playerId) => {
     delete players[playerId];
 });
 
+// 아이템 관련 소켓
+socket.on('updateItems', (serverItems) => {
+    items = serverItems;
+});
+
+socket.on('updateInventory', (itemType) => {
+    myItem = itemType;
+});
+
+socket.on('itemEffect', (data) => {
+    if (data.type === 'speed') {
+        speedMultiplier = 1.5;
+        setTimeout(() => { speedMultiplier = 1.0; }, data.duration);
+    }
+});
+
 socket.on('gameMessage', (msg) => {
     if (!isJoined) return;
     gameMessage.innerText = msg;
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v0.6';
+        gameMessage.innerText = '달리고 잡기 v0.7';
     }, 5000);
 });
 
@@ -183,13 +195,22 @@ function drawMap() {
     }
 }
 
+function drawItems() {
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const id in items) {
+        const item = items[id];
+        ctx.fillText('🎁', item.x + TILE_SIZE / 2, item.y + TILE_SIZE / 2);
+    }
+}
+
 function drawPlayers() {
     Object.keys(players).forEach((id) => {
         const p = players[id];
         ctx.fillStyle = p.color;
         ctx.fillRect(p.x, p.y, TILE_SIZE, TILE_SIZE);
 
-        // 술래 테두리
         if (id === taggerId) {
             ctx.strokeStyle = '#e74c3c';
             ctx.lineWidth = 4;
@@ -200,7 +221,6 @@ function drawPlayers() {
             ctx.fillText('술래', p.x + 4, p.y - 6);
         }
 
-        // 닉네임
         ctx.fillStyle = '#fff';
         ctx.font = '12px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'center';
@@ -208,7 +228,6 @@ function drawPlayers() {
         ctx.fillText(p.nickname, p.x + TILE_SIZE / 2, nicknameY);
         ctx.textAlign = 'start';
 
-        // 내 캐릭터 강조
         if (id === socket.id) {
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 2;
@@ -217,13 +236,39 @@ function drawPlayers() {
     });
 }
 
-// 이동 속도 (픽셀 단위)
-const MOVE_SPEED_PER_SEC = 240;
+function drawInventory() {
+    if (!isJoined) return;
+    const slotSize = 50;
+    const x = canvas.width / 2 - slotSize / 2;
+    const y = canvas.height - 60;
+
+    // 슬롯 배경 (반투명)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.fillRect(x, y, slotSize, slotSize);
+    ctx.strokeRect(x, y, slotSize, slotSize);
+
+    if (myItem) {
+        ctx.font = '30px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        let icon = '';
+        if (myItem === 'speed') icon = '⚡';
+        else if (myItem === 'banana') icon = '🍌';
+        else if (myItem === 'shield') icon = '🛡️';
+
+        ctx.fillStyle = '#fff';
+        ctx.fillText(icon, x + slotSize / 2, y + slotSize / 2);
+
+        ctx.font = '12px Arial';
+        ctx.fillText('Space', x + slotSize / 2, y - 10);
+    }
+}
 
 // 키 상태 관리
 let keys = {};
 
-// 키 상태 초기화 
 function resetInput() {
     for (let key in keys) {
         keys[key] = false;
@@ -241,13 +286,16 @@ window.addEventListener('keydown', (e) => {
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(e.key.toLowerCase())) {
         keys[e.key.toLowerCase()] = true;
     }
+    // 아이템 사용
+    if (e.code === 'Space') {
+        socket.emit('useItem');
+    }
 });
 
 window.addEventListener('keyup', (e) => {
     keys[e.key.toLowerCase()] = false;
 });
 
-// AABB 충돌 처리
 function checkWallCollision(newX, newY) {
     const padding = 4;
     const box = {
@@ -283,7 +331,6 @@ function processInput(deltaTimeSec) {
     if (keys['arrowleft'] || keys['a']) dx = -1;
     if (keys['arrowright'] || keys['d']) dx = 1;
 
-    // 대각선 정규화
     if (dx !== 0 && dy !== 0) {
         const len = Math.sqrt(dx * dx + dy * dy);
         dx /= len; dy /= len;
@@ -291,9 +338,10 @@ function processInput(deltaTimeSec) {
 
     const myPlayer = players[socket.id];
 
-    // 움직임 계산 (Sub-stepping)
     if (dx !== 0 || dy !== 0) {
-        let remainingDist = MOVE_SPEED_PER_SEC * deltaTimeSec;
+        // 속도 아이템 적용
+        let currentSpeed = BASE_SPEED * speedMultiplier;
+        let remainingDist = currentSpeed * deltaTimeSec;
         const STEP_SIZE = 4;
 
         while (remainingDist > 0) {
@@ -302,18 +350,14 @@ function processInput(deltaTimeSec) {
             let nextX = myPlayer.x + dx * step;
             let nextY = myPlayer.y + dy * step;
 
-            // X축 시도
             if (!checkWallCollision(nextX, myPlayer.y)) myPlayer.x = nextX;
-            // Y축 시도
             if (!checkWallCollision(myPlayer.x, nextY)) myPlayer.y = nextY;
         }
 
-        // 내 Target 위치도 동기화
         myPlayer.targetX = myPlayer.x;
         myPlayer.targetY = myPlayer.y;
     }
 
-    // 위치 전송 (30ms 스로틀링)
     const now = Date.now();
     if (now - lastEmitTime > 30) {
         socket.emit('playerMove', { x: myPlayer.x, y: myPlayer.y });
@@ -332,10 +376,8 @@ function update(timestamp) {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 1. 내 이동
     processInput(validDelta / 1000);
 
-    // 2. 다른 플레이어 보간 (Interpolation)
     const lerpFactor = 0.2;
     Object.keys(players).forEach(id => {
         if (id !== socket.id) {
@@ -350,7 +392,9 @@ function update(timestamp) {
     });
 
     drawMap();
+    drawItems();     // 아이템 그리기
     drawPlayers();
+    drawInventory(); // 인벤토리 그리기
 
     requestAnimationFrame(update);
 }

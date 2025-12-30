@@ -15,6 +15,62 @@ let players = {};
 let taggerId = null;
 const TILE_SIZE = 32;
 
+// --- 아이템 시스템 ---
+let items = {};
+let itemNextId = 1;
+const ITEM_TYPES = ['speed', 'banana', 'shield'];
+
+function spawnItem() {
+    if (Object.keys(items).length >= 5) return;
+
+    const pos = getRandomSpawn();
+    const id = itemNextId++;
+    const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+
+    items[id] = { x: pos.x, y: pos.y, type: type };
+    io.emit('updateItems', items);
+    console.log(`아이템 생성: ${type} at (${pos.x}, ${pos.y})`);
+}
+
+// 아이템 획득 판정 (범위 30으로 확대)
+function checkItemCollection(playerId) {
+    const player = players[playerId];
+    if (!player) return;
+
+    for (const itemId in items) {
+        const item = items[itemId];
+        const dx = player.x - item.x;
+        const dy = player.y - item.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // 30px 이내 접근 시 획득 (판정 범위 완화)
+        if (dist < 30) {
+            if (player.hasItem) return;
+
+            player.hasItem = item.type;
+            delete items[itemId];
+
+            io.emit('updateItems', items);
+            io.to(playerId).emit('updateInventory', player.hasItem);
+            io.emit('gameMessage', `[${player.nickname}] 님이 [${item.type}] 획득!`);
+            console.log(`아이템 획득: ${player.nickname} -> ${item.type}`);
+            break;
+        }
+    }
+}
+
+// 15초마다 자동 생성
+setInterval(() => {
+    spawnItem();
+    io.emit('gameMessage', `🎁 선물 상자가 나타났습니다!`);
+}, 15000);
+
+// 서버 시작 시 즉시 2개 생성 (테스트용)
+setTimeout(() => {
+    spawnItem(); spawnItem();
+}, 1000);
+
+
 // 맵 데이터
 const ROWS = 15;
 const COLS = 20;
@@ -71,6 +127,7 @@ io.on('connection', (socket) => {
 
         socket.emit('joinSuccess', players[socket.id]);
         socket.emit('currentPlayers', players);
+        socket.emit('updateItems', items); // 아이템 상태 전송
         socket.emit('updateTagger', taggerId);
 
         socket.broadcast.emit('newPlayer', players[socket.id]);
@@ -82,6 +139,17 @@ io.on('connection', (socket) => {
             players[socket.id].y = movementData.y;
             io.emit('playerMoved', players[socket.id]);
             checkCollision(socket.id);
+            checkItemCollection(socket.id);
+        }
+    });
+
+    socket.on('useItem', () => {
+        const player = players[socket.id];
+        if (player && player.hasItem) {
+            const itemType = player.hasItem;
+            player.hasItem = null;
+            io.to(socket.id).emit('updateInventory', null);
+            handleItemEffect(socket.id, itemType);
         }
     });
 
@@ -121,6 +189,19 @@ io.on('connection', (socket) => {
 // 충돌(태그) 판정 (쿨타임 적용)
 let canTag = true;
 
+function handleItemEffect(playerId, itemType) {
+    const player = players[playerId];
+    io.emit('gameMessage', `[${player.nickname}] 님이 [${itemType}] 사용!`);
+
+    if (itemType === 'speed') {
+        io.to(playerId).emit('itemEffect', { type: 'speed', duration: 5000 });
+    } else if (itemType === 'shield') {
+        player.hasShield = true;
+        io.to(playerId).emit('itemEffect', { type: 'shield', on: true });
+        // 방어막은 시간 제한 없이 태그 당할 때까지 유지 (혹은 시간 제한 둘 수도 있음)
+    }
+}
+
 function checkCollision(moverId) {
     if (!canTag) return;
 
@@ -138,6 +219,16 @@ function checkCollision(moverId) {
             const distance = Math.sqrt(dx * dx + dy * dy);
 
             if (distance < 25) {
+                // 실드 체크
+                if (runner.hasShield) {
+                    runner.hasShield = false;
+                    io.to(id).emit('itemEffect', { type: 'shield', on: false });
+                    io.emit('gameMessage', `[${runner.nickname}] 님이 방어막으로 태그를 막았습니다!`);
+                    canTag = false;
+                    setTimeout(() => { canTag = true; }, 1000);
+                    return;
+                }
+
                 taggerId = id;
                 io.emit('updateTagger', taggerId);
                 io.emit('tagOccurred', { newTaggerId: taggerId });
@@ -153,7 +244,7 @@ function checkCollision(moverId) {
         }
     }
 }
-
+// 하단 중복 제거됨.
 server.listen(3000, () => {
     console.log('서버 실행: http://localhost:3000');
 });
