@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>달리고 잡기 (Tag Game)</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -40,6 +40,17 @@
 
         <div id="error-log"></div>
         <div id="status-indicator"></div>
+
+        <!-- 모바일 컨트롤 (화면 작을 때만 표시) -->
+        <div id="mobile-controls">
+            <div id="dpad">
+                <button id="btn-up" class="dpad-btn">▲</button>
+                <button id="btn-left" class="dpad-btn">◀</button>
+                <button id="btn-center" class="dpad-btn"></button> <!-- 빈 공간 -->
+                <button id="btn-right" class="dpad-btn">▶</button>
+                <button id="btn-down" class="dpad-btn">▼</button>
+            </div>
+        </div>
     </div>
 
     <!-- Socket.io 라이브러리 로드 -->

@@ -283,6 +283,51 @@ function update() {
 update();
 
 
+// --- 모바일 컨트롤 로직 ---
+
+const btnUp = document.getElementById('btn-up');
+const btnDown = document.getElementById('btn-down');
+const btnLeft = document.getElementById('btn-left');
+const btnRight = document.getElementById('btn-right');
+
+function handleMobileInput(key, isPressed) {
+    if (!isJoined) return;
+    keys[key] = isPressed;
+}
+
+function addMobileListeners(btn, key) {
+    if (!btn) return;
+
+    // 터치 이벤트 (모바일)
+    btn.addEventListener('touchstart', (e) => {
+        e.preventDefault(); // 스크롤 등 기본 동작 방지
+        handleMobileInput(key, true);
+    });
+    btn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        handleMobileInput(key, false);
+    });
+
+    // 마우스 이벤트 (PC 테스트용)
+    btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        handleMobileInput(key, true);
+    });
+    btn.addEventListener('mouseup', (e) => {
+        e.preventDefault();
+        handleMobileInput(key, false);
+    });
+    btn.addEventListener('mouseleave', (e) => {
+        handleMobileInput(key, false);
+    });
+}
+
+addMobileListeners(btnUp, 'arrowup');
+addMobileListeners(btnDown, 'arrowdown');
+addMobileListeners(btnLeft, 'arrowleft');
+addMobileListeners(btnRight, 'arrowright');
+
+
 function showError(msg) {
     errorLog.style.display = 'block';
     errorLog.innerHTML += `<div>[Error] ${msg}</div>`;
