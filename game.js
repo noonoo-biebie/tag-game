@@ -10,6 +10,7 @@ const statusIndicator = document.getElementById('status-indicator');
 const gameMessage = document.getElementById('game-message');
 
 const loginScreen = document.getElementById('login-screen');
+const gameContainer = document.getElementById('game-container'); // 복구됨
 const nicknameInput = document.getElementById('nickname-input');
 const colorInput = document.getElementById('color-input');
 const startBtn = document.getElementById('start-btn');
