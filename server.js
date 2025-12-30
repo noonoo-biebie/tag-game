@@ -245,6 +245,7 @@ function checkCollision(moverId) {
     }
 }
 // 하단 중복 제거됨.
-server.listen(3000, () => {
-    console.log('서버 실행: http://localhost:3000');
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`서버 실행: http://localhost:${PORT}`);
 });
