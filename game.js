@@ -52,54 +52,74 @@ socket.on('joinSuccess', (myInfo) => {
 
     // 포커스를 캔버스나 바디로 돌려서 키 입력을 바로 받을 수 있게 함
     document.body.focus();
+
+    // 루프 시작 (이미 돌고 있을 수 있으나 확실하게)
+    if (!loopRunning) {
+        loopRunning = true;
+        requestAnimationFrame(update);
+    }
 });
 
 // --- 소켓 이벤트 핸들링 ---
 
 socket.on('currentPlayers', (serverPlayers) => {
     players = serverPlayers;
-    if (isJoined) update();
+    Object.keys(players).forEach(id => {
+        if (players[id].targetX === undefined) {
+            players[id].targetX = players[id].x;
+            players[id].targetY = players[id].y;
+        }
+    });
 });
 
 socket.on('updateTagger', (id) => {
     taggerId = id;
-    if (isJoined) update();
 });
 
 socket.on('playerMoved', (playerInfo) => {
-    // 내 캐릭터의 서버 위치 수신은 무시 (클라이언트 예측 이동 우선)
+    // 내 정보는 무시 (클라이언트 예측 이동 사용)
     if (playerInfo.playerId === socket.id) return;
 
-    players[playerInfo.playerId] = playerInfo;
-    if (isJoined) update();
+    if (!players[playerInfo.playerId]) {
+        // 새로 온 플레이어
+        players[playerInfo.playerId] = playerInfo;
+        players[playerInfo.playerId].targetX = playerInfo.x;
+        players[playerInfo.playerId].targetY = playerInfo.y;
+    } else {
+        // 기존 플레이어: 목표 위치(Target)만 갱신 -> update()에서 보간 이동
+        players[playerInfo.playerId].targetX = playerInfo.x;
+        players[playerInfo.playerId].targetY = playerInfo.y;
+        // 닉네임, 색상 등은 동기화
+        players[playerInfo.playerId].color = playerInfo.color;
+        players[playerInfo.playerId].nickname = playerInfo.nickname;
+    }
 });
 
 socket.on('newPlayer', (playerInfo) => {
     players[playerInfo.playerId] = playerInfo;
-    if (isJoined) update();
+    players[playerInfo.playerId].targetX = playerInfo.x;
+    players[playerInfo.playerId].targetY = playerInfo.y;
 });
 
 socket.on('disconnectPlayer', (playerId) => {
     delete players[playerId];
-    if (isJoined) update();
 });
 
 socket.on('gameMessage', (msg) => {
     if (!isJoined) return;
     gameMessage.innerText = msg;
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v0.4';
+        gameMessage.innerText = '달리고 잡기 v0.6';
     }, 5000);
 });
 
 socket.on('chatMessage', (data) => {
     if (!isJoined) return;
     const div = document.createElement('div');
-    // 내 메시지는 노란색, 남 메시지는 흰색?
     const color = (data.playerId === socket.id) ? '#f1c40f' : '#ecf0f1';
     div.innerHTML = `<span style="color:${color}; font-weight:bold;">${data.nickname}:</span> ${data.message}`;
     chatMessages.appendChild(div);
-    chatMessages.scrollTop = chatMessages.scrollHeight; // 스크롤 맨 아래로
+    chatMessages.scrollTop = chatMessages.scrollHeight;
 });
 
 socket.on('tagOccurred', () => {
@@ -118,8 +138,6 @@ socket.on('connect', () => {
 
 socket.on('disconnect', () => {
     updateStatus(false);
-    // 연결 끊기면 다시 로그인 화면으로? 아니면 재접속 대기?
-    // 일단은 유지
 });
 
 socket.on('connect_error', (err) => {
@@ -160,7 +178,6 @@ function drawMap() {
                 ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
             } else {
                 ctx.fillStyle = '#34495e';
-                // ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
             }
         }
     }
@@ -183,15 +200,13 @@ function drawPlayers() {
             ctx.fillText('술래', p.x + 4, p.y - 6);
         }
 
-        // 닉네임 표시
+        // 닉네임
         ctx.fillStyle = '#fff';
         ctx.font = '12px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'center';
-        // 닉네임은 캐릭터 아래에? 위에? 
-        // 술래 텍스트랑 겹칠 수 있으니 일반적으론 위. 술래일 땐 술래 텍스트 위로.
         const nicknameY = (id === taggerId) ? p.y - 20 : p.y - 6;
         ctx.fillText(p.nickname, p.x + TILE_SIZE / 2, nicknameY);
-        ctx.textAlign = 'start'; // 복구
+        ctx.textAlign = 'start';
 
         // 내 캐릭터 강조
         if (id === socket.id) {
@@ -202,35 +217,19 @@ function drawPlayers() {
     });
 }
 
-function update() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawMap();
-    drawPlayers();
-}
-
-function isWalkable(x, y) {
-    const col = Math.floor(x / TILE_SIZE);
-    const row = Math.floor(y / TILE_SIZE);
-
-    if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return false;
-    return map[row][col] === 0;
-}
-
 // 이동 속도 (픽셀 단위)
-// 기존 4px/frame -> 60fps 기준 약 240px/sec
 const MOVE_SPEED_PER_SEC = 240;
 
 // 키 상태 관리
-const keys = {};
+let keys = {};
 
-// 키 상태 초기화 (자율주행 방지)
+// 키 상태 초기화 
 function resetInput() {
     for (let key in keys) {
         keys[key] = false;
     }
 }
 
-// 탭이 가려지거나 포커스를 잃으면 키 입력 취소
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) resetInput();
 });
@@ -238,16 +237,18 @@ window.addEventListener('blur', resetInput);
 
 window.addEventListener('keydown', (e) => {
     if (document.activeElement.tagName === 'INPUT') return;
-    keys[e.key.toLowerCase()] = true;
+
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(e.key.toLowerCase())) {
+        keys[e.key.toLowerCase()] = true;
+    }
 });
 
 window.addEventListener('keyup', (e) => {
     keys[e.key.toLowerCase()] = false;
 });
 
-// AABB 충돌 처리 (직사각형 벽 충돌 확인)
+// AABB 충돌 처리
 function checkWallCollision(newX, newY) {
-    // 캐릭터 크기를 32x32보다 약간 작게 잡아서(여유 2px) 끼임 방지 및 좁은 길 통과 용이하게
     const padding = 4;
     const box = {
         left: newX + padding,
@@ -255,8 +256,6 @@ function checkWallCollision(newX, newY) {
         top: newY + padding,
         bottom: newY + TILE_SIZE - padding
     };
-
-    // 검사해야 할 4개의 모서리 좌표 (TopLeft, TopRight, BottomLeft, BottomRight)
     const points = [
         { x: box.left, y: box.top },
         { x: box.right, y: box.top },
@@ -267,72 +266,88 @@ function checkWallCollision(newX, newY) {
     for (const p of points) {
         const c = Math.floor(p.x / TILE_SIZE);
         const r = Math.floor(p.y / TILE_SIZE);
-
-        // 맵 밖으로 나가면 충돌
         if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
-        // 벽(1)이면 충돌
         if (map[r][c] === 1) return true;
     }
-
     return false;
 }
 
-// 이동 처리 함수 (매 프레임 실행, deltaTime 반영)
+let lastEmitTime = 0;
+
 function processInput(deltaTimeSec) {
     if (!isJoined || !players[socket.id]) return;
 
-    let dx = 0;
-    let dy = 0;
-
+    let dx = 0; let dy = 0;
     if (keys['arrowup'] || keys['w']) dy = -1;
     if (keys['arrowdown'] || keys['s']) dy = 1;
     if (keys['arrowleft'] || keys['a']) dx = -1;
     if (keys['arrowright'] || keys['d']) dx = 1;
 
-    // 대각선 이동 시 속도 일정하게 보정 (Normalize)
+    // 대각선 정규화
     if (dx !== 0 && dy !== 0) {
-        const length = Math.sqrt(dx * dx + dy * dy);
-        dx /= length;
-        dy /= length;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        dx /= len; dy /= len;
     }
-
-    if (dx === 0 && dy === 0) return;
-
-    // 이동 거리 = 속도(px/sec) * 시간(sec)
-    const moveDist = MOVE_SPEED_PER_SEC * deltaTimeSec;
 
     const myPlayer = players[socket.id];
-    let nextX = myPlayer.x + dx * moveDist;
-    let nextY = myPlayer.y + dy * moveDist;
 
-    // X축 이동 시도 및 충돌 체크
-    if (!checkWallCollision(nextX, myPlayer.y)) {
-        myPlayer.x = nextX;
-    }
-    // Y축 이동 시도 및 충돌 체크 (독립적으로 체크하여 벽 비비기 가능하게)
-    if (!checkWallCollision(myPlayer.x, nextY)) {
-        myPlayer.y = nextY;
+    // 움직임 계산 (Sub-stepping)
+    if (dx !== 0 || dy !== 0) {
+        let remainingDist = MOVE_SPEED_PER_SEC * deltaTimeSec;
+        const STEP_SIZE = 4;
+
+        while (remainingDist > 0) {
+            const step = Math.min(remainingDist, STEP_SIZE);
+            remainingDist -= step;
+            let nextX = myPlayer.x + dx * step;
+            let nextY = myPlayer.y + dy * step;
+
+            // X축 시도
+            if (!checkWallCollision(nextX, myPlayer.y)) myPlayer.x = nextX;
+            // Y축 시도
+            if (!checkWallCollision(myPlayer.x, nextY)) myPlayer.y = nextY;
+        }
+
+        // 내 Target 위치도 동기화
+        myPlayer.targetX = myPlayer.x;
+        myPlayer.targetY = myPlayer.y;
     }
 
-    // 위치 전송 (너무 자주 보내면 부하가 생길 수 있으나, 부드러운 동기화를 위해 일단 보냄)
-    socket.emit('playerMove', { x: myPlayer.x, y: myPlayer.y });
+    // 위치 전송 (30ms 스로틀링)
+    const now = Date.now();
+    if (now - lastEmitTime > 30) {
+        socket.emit('playerMove', { x: myPlayer.x, y: myPlayer.y });
+        lastEmitTime = now;
+    }
 }
 
 let lastTime = 0;
+let loopRunning = false;
 
 function update(timestamp) {
     if (!lastTime) lastTime = timestamp;
     const deltaTime = timestamp - lastTime;
     lastTime = timestamp;
-
-    // 탭 비활성 등으로 인해 시간이 너무 많이 흐른 경우(0.1초 이상), 
-    // 그냥 0.1초(100ms)만큼만 흐른 것으로 간주하여 텔레포트 방지
     const validDelta = Math.min(deltaTime, 100);
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 입력 처리 (초 단위로 변환해서 전달)
+    // 1. 내 이동
     processInput(validDelta / 1000);
+
+    // 2. 다른 플레이어 보간 (Interpolation)
+    const lerpFactor = 0.2;
+    Object.keys(players).forEach(id => {
+        if (id !== socket.id) {
+            const p = players[id];
+            if (p.targetX !== undefined && p.targetY !== undefined) {
+                p.x += (p.targetX - p.x) * lerpFactor;
+                p.y += (p.targetY - p.y) * lerpFactor;
+                if (Math.abs(p.targetX - p.x) < 0.5) p.x = p.targetX;
+                if (Math.abs(p.targetY - p.y) < 0.5) p.y = p.targetY;
+            }
+        }
+    });
 
     drawMap();
     drawPlayers();
@@ -340,11 +355,8 @@ function update(timestamp) {
     requestAnimationFrame(update);
 }
 
-// 루프 시작
-requestAnimationFrame(update);
 
-
-// --- 모바일 컨트롤 로직 ---
+// --- 모바일 및 UI 유틸 ---
 
 const btnUp = document.getElementById('btn-up');
 const btnDown = document.getElementById('btn-down');
@@ -358,36 +370,17 @@ function handleMobileInput(key, isPressed) {
 
 function addMobileListeners(btn, key) {
     if (!btn) return;
-
-    // 터치 이벤트 (모바일)
-    btn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        handleMobileInput(key, true);
-    });
-    btn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        handleMobileInput(key, false);
-    });
-
-    // 마우스 이벤트 (PC 테스트용)
-    btn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        handleMobileInput(key, true);
-    });
-    btn.addEventListener('mouseup', (e) => {
-        e.preventDefault();
-        handleMobileInput(key, false);
-    });
-    btn.addEventListener('mouseleave', (e) => {
-        handleMobileInput(key, false);
-    });
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); handleMobileInput(key, true); });
+    btn.addEventListener('touchend', (e) => { e.preventDefault(); handleMobileInput(key, false); });
+    btn.addEventListener('mousedown', (e) => { e.preventDefault(); handleMobileInput(key, true); });
+    btn.addEventListener('mouseup', (e) => { e.preventDefault(); handleMobileInput(key, false); });
+    btn.addEventListener('mouseleave', (e) => { handleMobileInput(key, false); });
 }
 
 addMobileListeners(btnUp, 'arrowup');
 addMobileListeners(btnDown, 'arrowdown');
 addMobileListeners(btnLeft, 'arrowleft');
 addMobileListeners(btnRight, 'arrowright');
-
 
 function showError(msg) {
     errorLog.style.display = 'block';
