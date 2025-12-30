@@ -25,10 +25,10 @@ let taggerId = null;
 // --- 로그인(입장) 로직 ---
 
 startBtn.addEventListener('click', () => {
-    const nickname = nicknameInput.value.trim();
+    let nickname = nicknameInput.value.trim();
     if (!nickname) {
-        alert('닉네임을 입력해주세요!');
-        return;
+        // 닉네임 안 쓰면 랜덤 생성 (테스트 편의성)
+        nickname = 'Player' + Math.floor(Math.random() * 1000);
     }
     socket.emit('joinGame', { nickname: nickname, color: colorInput.value });
 });
@@ -67,6 +67,9 @@ socket.on('updateTagger', (id) => {
 });
 
 socket.on('playerMoved', (playerInfo) => {
+    // 내 캐릭터의 서버 위치 수신은 무시 (클라이언트 예측 이동 우선)
+    if (playerInfo.playerId === socket.id) return;
+
     players[playerInfo.playerId] = playerInfo;
     if (isJoined) update();
 });
@@ -213,12 +216,25 @@ function isWalkable(x, y) {
     return map[row][col] === 0;
 }
 
-// 이동 딜레이
-let lastMoveTime = 0;
-const MOVE_DELAY = 100; // 0.1초 (적당한 속도)
+// 이동 속도 (픽셀 단위)
+// 기존 4px/frame -> 60fps 기준 약 240px/sec
+const MOVE_SPEED_PER_SEC = 240;
 
 // 키 상태 관리
 const keys = {};
+
+// 키 상태 초기화 (자율주행 방지)
+function resetInput() {
+    for (let key in keys) {
+        keys[key] = false;
+    }
+}
+
+// 탭이 가려지거나 포커스를 잃으면 키 입력 취소
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) resetInput();
+});
+window.addEventListener('blur', resetInput);
 
 window.addEventListener('keydown', (e) => {
     if (document.activeElement.tagName === 'INPUT') return;
@@ -229,45 +245,94 @@ window.addEventListener('keyup', (e) => {
     keys[e.key.toLowerCase()] = false;
 });
 
-// 이동 처리 함수 (매 프레임 실행)
-function processInput() {
-    if (!isJoined || !players[socket.id]) return;
+// AABB 충돌 처리 (직사각형 벽 충돌 확인)
+function checkWallCollision(newX, newY) {
+    // 캐릭터 크기를 32x32보다 약간 작게 잡아서(여유 2px) 끼임 방지 및 좁은 길 통과 용이하게
+    const padding = 4;
+    const box = {
+        left: newX + padding,
+        right: newX + TILE_SIZE - padding,
+        top: newY + padding,
+        bottom: newY + TILE_SIZE - padding
+    };
 
-    const now = Date.now();
-    if (now - lastMoveTime < MOVE_DELAY) return;
+    // 검사해야 할 4개의 모서리 좌표 (TopLeft, TopRight, BottomLeft, BottomRight)
+    const points = [
+        { x: box.left, y: box.top },
+        { x: box.right, y: box.top },
+        { x: box.left, y: box.bottom },
+        { x: box.right, y: box.bottom }
+    ];
+
+    for (const p of points) {
+        const c = Math.floor(p.x / TILE_SIZE);
+        const r = Math.floor(p.y / TILE_SIZE);
+
+        // 맵 밖으로 나가면 충돌
+        if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
+        // 벽(1)이면 충돌
+        if (map[r][c] === 1) return true;
+    }
+
+    return false;
+}
+
+// 이동 처리 함수 (매 프레임 실행, deltaTime 반영)
+function processInput(deltaTimeSec) {
+    if (!isJoined || !players[socket.id]) return;
 
     let dx = 0;
     let dy = 0;
 
     if (keys['arrowup'] || keys['w']) dy = -1;
-    else if (keys['arrowdown'] || keys['s']) dy = 1;
-    else if (keys['arrowleft'] || keys['a']) dx = -1;
-    else if (keys['arrowright'] || keys['d']) dx = 1;
+    if (keys['arrowdown'] || keys['s']) dy = 1;
+    if (keys['arrowleft'] || keys['a']) dx = -1;
+    if (keys['arrowright'] || keys['d']) dx = 1;
 
-    // 이동 입력이 없으면 리턴
+    // 대각선 이동 시 속도 일정하게 보정 (Normalize)
+    if (dx !== 0 && dy !== 0) {
+        const length = Math.sqrt(dx * dx + dy * dy);
+        dx /= length;
+        dy /= length;
+    }
+
     if (dx === 0 && dy === 0) return;
 
+    // 이동 거리 = 속도(px/sec) * 시간(sec)
+    const moveDist = MOVE_SPEED_PER_SEC * deltaTimeSec;
+
     const myPlayer = players[socket.id];
-    const nextX = myPlayer.x + dx * TILE_SIZE;
-    const nextY = myPlayer.y + dy * TILE_SIZE;
+    let nextX = myPlayer.x + dx * moveDist;
+    let nextY = myPlayer.y + dy * moveDist;
 
-    if (isWalkable(nextX, nextY)) {
-        players[socket.id].x = nextX;
-        players[socket.id].y = nextY;
-        lastMoveTime = now;
-
-        // 이동했으므로 update 통해 즉시 렌더링 할 수 있지만,
-        // 어차피 requestAnimationFrame 루프가 돌고 있으므로 데이터만 바꾸면 됩니다.
-        // 다만 부드러움을 위해 여기서 emit은 해야 합니다.
-        socket.emit('playerMove', { x: nextX, y: nextY });
+    // X축 이동 시도 및 충돌 체크
+    if (!checkWallCollision(nextX, myPlayer.y)) {
+        myPlayer.x = nextX;
     }
+    // Y축 이동 시도 및 충돌 체크 (독립적으로 체크하여 벽 비비기 가능하게)
+    if (!checkWallCollision(myPlayer.x, nextY)) {
+        myPlayer.y = nextY;
+    }
+
+    // 위치 전송 (너무 자주 보내면 부하가 생길 수 있으나, 부드러운 동기화를 위해 일단 보냄)
+    socket.emit('playerMove', { x: myPlayer.x, y: myPlayer.y });
 }
 
-function update() {
+let lastTime = 0;
+
+function update(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const deltaTime = timestamp - lastTime;
+    lastTime = timestamp;
+
+    // 탭 비활성 등으로 인해 시간이 너무 많이 흐른 경우(0.1초 이상), 
+    // 그냥 0.1초(100ms)만큼만 흐른 것으로 간주하여 텔레포트 방지
+    const validDelta = Math.min(deltaTime, 100);
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 입력 처리
-    processInput();
+    // 입력 처리 (초 단위로 변환해서 전달)
+    processInput(validDelta / 1000);
 
     drawMap();
     drawPlayers();
@@ -275,12 +340,8 @@ function update() {
     requestAnimationFrame(update);
 }
 
-// 초기 호출 (소켓 이벤트나 다른 곳에서 update 호출하던 것을 requestAnimationFrame 루프로 통합했으므로 중복 호출 주의)
-// 소켓 이벤트에서는 데이터만 업데이트하고, 렌더링은 이 루프가 전담하게 변경하는 것이 좋습니다.
-// 하지만 기존 구조를 최소한으로 건드리면서 적용하기 위해 아래와 같이 합니다.
-
-// 기존 update 호출 제거하고 루프 시작
-update();
+// 루프 시작
+requestAnimationFrame(update);
 
 
 // --- 모바일 컨트롤 로직 ---
@@ -300,7 +361,7 @@ function addMobileListeners(btn, key) {
 
     // 터치 이벤트 (모바일)
     btn.addEventListener('touchstart', (e) => {
-        e.preventDefault(); // 스크롤 등 기본 동작 방지
+        e.preventDefault();
         handleMobileInput(key, true);
     });
     btn.addEventListener('touchend', (e) => {

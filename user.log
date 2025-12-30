@@ -1,3 +1,7 @@
-[2025-12-30 22:48:29]
-> 사용자: ㄱㄱ
-> 작업: v0.5 완료, task.md 업데이트, Git 커밋 및 푸시
+[2025-12-31 01:08:18]
+> 사용자: 탭 전환 시 캐릭터 소멸 현상(서버 연결 끊김) 원인 및 해결 방안 문의.
+> 원인: 백그라운드 탭의 네트워크 패킷 스로틀링으로 인한 Heartbeat 타임아웃 -> 서버가 연결 종료 처리(disconnect) -> 캐릭터 데이터 삭제.
+> 해결안(미적용): 
+  1. Reconnection Grace Period(삭제 유예 시간) 도입.
+  2. LocalStorage에 Session ID 저장 및 재접속 시 복구(Session Restore).
+  3. PingTimeout 시간 연장.
