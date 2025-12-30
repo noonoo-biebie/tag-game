@@ -1,6 +1,16 @@
 {
+  "name": "tag-game",
+  "version": "0.7.0",
+  "description": "Real-time multiplayer tag game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "express": "^5.2.1",
     "socket.io": "^4.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
