@@ -207,11 +207,22 @@ function handleItemEffect(playerId, itemType) {
     io.emit('gameMessage', `[${player.nickname}] 님이 [${itemType}] 사용!`);
 
     if (itemType === 'speed') {
+        player.isSpeeding = true;
+        io.emit('playerMoved', player); // 상태 변경 알림 (속도 효과 보임)
         io.to(playerId).emit('itemEffect', { type: 'speed', duration: 5000 });
+
+        // 5초 후 효과 해제 및 알림
+        setTimeout(() => {
+            if (player) { // 플레이어가 여전히 접속 중이면
+                player.isSpeeding = false;
+                io.emit('playerMoved', player);
+            }
+        }, 5000);
+
     } else if (itemType === 'shield') {
         player.hasShield = true;
         io.to(playerId).emit('itemEffect', { type: 'shield', on: true });
-        // 방어막은 시간 제한 없이 태그 당할 때까지 유지 (혹은 시간 제한 둘 수도 있음)
+        io.emit('playerMoved', player); // 쉴드 킨 상태 알림
     } else if (itemType === 'banana') {
         const id = trapNextId++;
         traps[id] = {

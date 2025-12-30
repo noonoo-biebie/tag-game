@@ -97,10 +97,13 @@ socket.on('playerMoved', (playerInfo) => {
         players[playerInfo.playerId].targetX = playerInfo.x;
         players[playerInfo.playerId].targetY = playerInfo.y;
     } else {
-        players[playerInfo.playerId].targetX = playerInfo.x;
+        players[playerInfo.playerId].targetX = playerInfo.x; // 복구됨
         players[playerInfo.playerId].targetY = playerInfo.y;
         players[playerInfo.playerId].color = playerInfo.color;
         players[playerInfo.playerId].nickname = playerInfo.nickname;
+        // 시각 효과 동기화 추가
+        players[playerInfo.playerId].hasShield = playerInfo.hasShield;
+        players[playerInfo.playerId].isSpeeding = playerInfo.isSpeeding;
     }
 });
 
@@ -128,11 +131,24 @@ socket.on('updateInventory', (itemType) => {
 });
 
 socket.on('itemEffect', (data) => {
+    const myPlayer = players[socket.id];
+    if (!myPlayer) return;
+
     if (data.type === 'speed') {
         speedMultiplier = 1.5;
-        setTimeout(() => { speedMultiplier = 1.0; }, data.duration);
+        myPlayer.isSpeeding = true; // 본인 시각 효과 켜기
+
+        setTimeout(() => {
+            speedMultiplier = 1.0;
+            myPlayer.isSpeeding = false; // 본인 시각 효과 끄기 (타이밍 맞추기)
+        }, data.duration);
+
     } else if (data.type === 'shield') {
-        // UI 효과 등 필요하면 추가
+        if (data.on) {
+            myPlayer.hasShield = true;
+        } else {
+            myPlayer.hasShield = false;
+        }
     }
 });
 
@@ -276,6 +292,25 @@ function drawTraps() {
 function drawPlayers() {
     Object.keys(players).forEach((id) => {
         const p = players[id];
+
+        // 1. 스피드 효과 (노란색 오라)
+        if (p.isSpeeding) {
+            ctx.fillStyle = 'rgba(241, 196, 15, 0.4)';
+            ctx.fillRect(p.x - 4, p.y - 4, TILE_SIZE + 8, TILE_SIZE + 8);
+        }
+
+        // 2. 쉴드 효과 (파란색 보호막 원)
+        if (p.hasShield) {
+            ctx.beginPath();
+            ctx.arc(p.x + TILE_SIZE / 2, p.y + TILE_SIZE / 2, TILE_SIZE / 1.2, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(52, 152, 219, 0.3)';
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#3498db';
+            ctx.stroke();
+        }
+
+        // 3. 플레이어 본체
         ctx.fillStyle = p.color;
         ctx.fillRect(p.x, p.y, TILE_SIZE, TILE_SIZE);
 
