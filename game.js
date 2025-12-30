@@ -1,4 +1,6 @@
-const socket = io();
+const socket = io({
+    transports: ['websocket', 'polling']
+});
 
 // HTML 요소
 const canvas = document.getElementById('gameCanvas');
@@ -8,6 +10,7 @@ const statusIndicator = document.getElementById('status-indicator');
 const gameMessage = document.getElementById('game-message');
 
 const loginScreen = document.getElementById('login-screen');
+const nicknameInput = document.getElementById('nickname-input');
 const colorInput = document.getElementById('color-input');
 const startBtn = document.getElementById('start-btn');
 const loadingOverlay = document.getElementById('server-loading-overlay'); // 추가
@@ -34,6 +37,11 @@ startBtn.addEventListener('click', () => {
     if (!nickname) {
         nickname = 'Player' + Math.floor(Math.random() * 1000);
     }
+
+    // 버튼 클릭 피드백
+    startBtn.disabled = true;
+    startBtn.innerText = "입장 중...";
+
     socket.emit('joinGame', { nickname: nickname, color: colorInput.value });
 });
 
