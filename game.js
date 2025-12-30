@@ -8,10 +8,9 @@ const statusIndicator = document.getElementById('status-indicator');
 const gameMessage = document.getElementById('game-message');
 
 const loginScreen = document.getElementById('login-screen');
-const gameContainer = document.getElementById('game-container');
-const nicknameInput = document.getElementById('nickname-input');
 const colorInput = document.getElementById('color-input');
 const startBtn = document.getElementById('start-btn');
+const loadingOverlay = document.getElementById('server-loading-overlay'); // 추가
 
 // 채팅 요소
 const chatInput = document.getElementById('chat-input');
@@ -146,6 +145,12 @@ socket.on('connect', () => {
     updateStatus(true);
     errorLog.style.display = 'none';
     errorLog.innerHTML = '';
+
+    // 서버 연결 성공 시 로딩 숨기고 로그인 화면 표시 (이미 게임 중이면 패스)
+    if (!isJoined) {
+        loadingOverlay.style.display = 'none';
+        loginScreen.style.display = 'block';
+    }
 });
 
 socket.on('disconnect', () => {

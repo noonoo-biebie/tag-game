@@ -9,9 +9,19 @@
 </head>
 
 <body>
+    <!-- 서버 로딩 안내 (Render Sleep 방지용) -->
+    <div id="server-loading-overlay">
+        <div class="loading-content">
+            <h2>🌍 서버와 연결 중입니다...</h2>
+            <p>서버가 잠들어 있다면 깨우는 데 최대 1분이 걸릴 수 있습니다.</p>
+            <p>잠시만 기다려주세요! 💤⏰</p>
+            <div class="spinner"></div>
+        </div>
+    </div>
+
     <!-- 닉네임 입력 화면 -->
-    <div id="login-screen">
-        <h1>달리고 잡기 v0.4</h1>
+    <div id="login-screen" style="display: none;"> <!-- 초기엔 숨김 (연결되면 보임) -->
+        <h1>달리고 잡기 v0.7</h1>
         <div style="margin-bottom: 20px;">
             <input type="text" id="nickname-input" placeholder="닉네임 (최대 10자)" maxlength="10">
             <input type="color" id="color-input" value="#e74c3c" title="캐릭터 색상 선택">
