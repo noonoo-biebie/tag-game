@@ -110,10 +110,17 @@ chatInput.addEventListener('keydown', (e) => {
             if (msg === '/fog') {
                 showShadows = !showShadows;
                 const status = showShadows ? 'ON' : 'OFF';
+
+                // 로컬 메시지
                 const div = document.createElement('div');
                 div.innerHTML = `<span style="color:#e74c3c; font-weight:bold;">System:</span> 전장의 안개 ${status}`;
                 chatMessages.appendChild(div);
                 chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // [추가] 전체 알림
+                const actionMsg = showShadows ? '어둠시야를 다시 켰습니다.' : '어둠시야를 밝혔습니다! (Hellfire Mode)';
+                socket.emit('announceAction', actionMsg);
+
                 chatInput.value = '';
                 return;
             }

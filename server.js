@@ -700,6 +700,16 @@ function setupSocketEvents(socket) {
     socket.on('disconnect', () => handleDisconnect(socket));
     socket.on('chatMessage', (msg) => handleChatMessage(socket, msg));
     socket.on('sendFeedback', (msg) => handleFeedback(socket, msg));
+    // 공지용 액션
+    socket.on('announceAction', (action) => handleAnnounceAction(socket, action));
+}
+
+function handleAnnounceAction(socket, action) {
+    if (!players[socket.id]) return;
+    const nickname = players[socket.id].nickname;
+    const msg = `[${nickname}] 님이 ${action}`;
+    io.emit('gameMessage', msg);
+    io.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
 }
 
 function handleFeedback(socket, msg) {
@@ -790,21 +800,159 @@ function handleDisconnect(socket) {
     }
 }
 
+// 리셋 확인용 변수
+let resetRequestTime = 0;
+let resetRequesterId = null;
+
+function resetGame() {
+    items = {};
+    traps = {};
+    io.emit('updateItems', items);
+    io.emit('updateTraps', traps);
+
+    // 플레이어/봇 재배치
+    for (const id in players) {
+        const p = players[id];
+        const spawn = getRandomSpawn();
+        p.x = spawn.x;
+        p.y = spawn.y;
+        p.targetX = p.x;
+        p.targetY = p.y;
+        p.isSlipped = false;
+        p.stunnedUntil = 0;
+        p.hasItem = null;
+        p.hasShield = false;
+        p.isSpeeding = false;
+    }
+    io.emit('currentPlayers', players);
+
+    const msg = "🔄 맵이 초기화되었습니다!";
+    io.emit('gameMessage', msg);
+    io.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
+}
+
 function handleChatMessage(socket, msg) {
-    if (players[socket.id]) {
-        // 봇 소환 명령어
-        if (msg.trim() === '/bot' || msg.trim() === '/addbot') {
-            createBot();
-            return;
+    if (!players[socket.id]) return;
+
+    const player = players[socket.id];
+    const cmd = msg.trim();
+
+    // 1. 봇 소환
+    if (cmd === '/bot' || cmd === '/addbot') {
+        createBot();
+        const infoMsg = `[${player.nickname}] 님이 봇을 소환했습니다! 🤖`;
+        io.emit('gameMessage', infoMsg);
+        io.emit('chatMessage', { nickname: 'System', message: infoMsg, playerId: 'system' });
+        return;
+    }
+
+    // 2. 봇 추방
+    if (cmd === '/kickbot' || cmd === '/removebot') {
+        // 봇 찾기 (뒤에서부터)
+        let botId = null;
+        const ids = Object.keys(players);
+        for (let i = ids.length - 1; i >= 0; i--) {
+            if (players[ids[i]] instanceof Bot) {
+                botId = ids[i];
+                break;
+            }
         }
 
-        const nickname = players[socket.id].nickname;
-        io.emit('chatMessage', {
-            nickname: nickname,
-            message: msg,
-            playerId: socket.id
-        });
+        if (botId) {
+            delete players[botId];
+            io.emit('disconnectPlayer', botId);
+            const kickMsg = `[${player.nickname}] 님이 봇을 추방했습니다! 👋`;
+            io.emit('gameMessage', kickMsg);
+            io.emit('chatMessage', { nickname: 'System', message: kickMsg, playerId: 'system' });
+
+            // 술래가 추방되었으면 새 술래 지정
+            if (taggerId === botId) {
+                const remaining = Object.keys(players);
+                if (remaining.length > 0) {
+                    taggerId = remaining[0];
+                    io.emit('updateTagger', taggerId);
+                    io.emit('tagOccurred', { newTaggerId: taggerId });
+                } else {
+                    taggerId = null;
+                }
+            }
+        } else {
+            const failMsg = "추방할 봇이 없습니다.";
+            socket.emit('gameMessage', failMsg);
+            socket.emit('chatMessage', { nickname: 'System', message: failMsg, playerId: 'system' });
+        }
+        return;
     }
+
+    // 3. 리셋
+    if (cmd === '/reset') {
+        const now = Date.now();
+        if (resetRequesterId === socket.id && now - resetRequestTime < 5000) {
+            // 확정
+            resetGame();
+            const resetMsg = `[${player.nickname}] 님이 게임을 리셋했습니다! 💥`;
+            io.emit('gameMessage', resetMsg);
+            io.emit('chatMessage', { nickname: 'System', message: resetMsg, playerId: 'system' });
+            resetRequesterId = null;
+        } else {
+            // 요청
+            resetRequesterId = now;
+            resetRequestTime = now;
+            const warnMsg = "⚠️ 5초 안에 '/reset'을 한번 더 입력하면 초기화됩니다.";
+            socket.emit('gameMessage', warnMsg);
+            socket.emit('chatMessage', { nickname: 'System', message: warnMsg, playerId: 'system' });
+        }
+        return;
+    }
+
+    // 4. 도움말
+    if (cmd === '/help' || cmd === '/명령어' || cmd === '/?') {
+        const helpMsg = '<br>📜 <b>명령어 목록</b><br>' +
+            '🤖 <b>/bot</b> : 봇 소환<br>' +
+            '👋 <b>/kickbot</b> : 봇 추방<br>' +
+            '🔄 <b>/reset</b> : 맵 초기화<br>' +
+            '👁️ <b>/fog</b> : 시야 제한 해제 (치트)<br>' +
+            '📝 <b>/피드백확인</b> : 수집된 피드백 보기';
+
+        socket.emit('chatMessage', {
+            nickname: 'System',
+            message: helpMsg,
+            playerId: 'system'
+        });
+        return;
+    }
+
+    // 5. 피드백 확인 (관리자용)
+    if (cmd === '/readfeedback' || cmd === '/피드백확인') {
+        fs.readFile('feedback.txt', 'utf8', (err, data) => {
+            if (err) {
+                socket.emit('chatMessage', {
+                    nickname: 'System',
+                    message: "아직 등록된 피드백이 없거나 파일을 읽을 수 없습니다.",
+                    playerId: 'system'
+                });
+            } else {
+                // HTML 줄바꿈 처리 및 최신순 정렬 (선택)
+                // 너무 길 수 있으니 마지막 2000자만 끊거나, 일단 다 보여줌
+                let formatted = data.trim().replace(/\n/g, '<br>');
+                if (formatted === '') formatted = "피드백 내용이 비어있습니다.";
+
+                socket.emit('chatMessage', {
+                    nickname: 'System',
+                    message: '<br>📢 <b>수집된 피드백 목록</b><br>' + formatted,
+                    playerId: 'system'
+                });
+            }
+        });
+        return;
+    }
+
+    // 일반 메시지
+    io.emit('chatMessage', {
+        nickname: player.nickname,
+        message: msg,
+        playerId: socket.id
+    });
 }
 
 // 충돌(태그) 판정
