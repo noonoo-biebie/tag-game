@@ -48,6 +48,28 @@ feedbackBtn.addEventListener('click', () => {
     feedbackInput.focus();
 });
 
+const guideBtn = document.getElementById('guide-btn');
+const guideModal = document.getElementById('guide-modal');
+const guideClose = document.getElementById('guide-close');
+
+guideBtn.addEventListener('click', () => {
+    guideModal.style.display = 'block';
+});
+
+guideClose.addEventListener('click', () => {
+    guideModal.style.display = 'none';
+});
+
+// 외부 클릭 시 모달 닫기
+window.addEventListener('click', (e) => {
+    if (e.target == guideModal) {
+        guideModal.style.display = 'none';
+    }
+    if (e.target == feedbackModal) {
+        feedbackModal.style.display = 'none';
+    }
+});
+
 feedbackCancel.addEventListener('click', () => {
     feedbackModal.style.display = 'none';
     feedbackInput.value = '';

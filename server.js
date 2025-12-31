@@ -323,18 +323,19 @@ class Bot {
         if (!this.hasItem) return;
 
         // 성격별 사용 확률
-        let useChance = 0.05; // 틱당 5% (빈도 상향)
+        let useChance = 0.05; // 틱당 5%
 
         if (this.personality === BOT_PERSONALITIES.AGGRESSIVE) {
             if (this.hasItem === 'speed') useChance = 0.2; // 공격형은 스피드 좋아함
         } else if (this.personality === BOT_PERSONALITIES.PLAYFUL) {
             if (this.hasItem === 'banana') useChance = 0.1; // 장난꾸러기는 바나나 설치
+        } else if (this.personality === BOT_PERSONALITIES.COWARD) {
+            if (this.hasItem === 'shield' || this.hasItem === 'speed') useChance = 0.2; // 겁쟁이는 방어/도주템 즉시 사용
         }
 
         if (Math.random() < useChance) {
             handleItemEffect(this.id, this.hasItem);
             this.hasItem = null;
-            // 봇은 클라이언트 UI 업데이트 불필요
         }
     }
 }

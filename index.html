@@ -62,6 +62,39 @@
         <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
     </div>
 
+    <!-- 가이드 버튼 & 모달 -->
+    <button id="guide-btn"
+        style="position: fixed; top: 20px; right: 20px; padding: 10px 15px; border-radius: 20px; border: none; background: #2980b9; color: white; font-weight: bold; cursor: pointer; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">?
+        가이드</button>
+
+    <div id="guide-modal" class="modal" style="display: none;">
+        <div class="modal-content guide-content">
+            <span class="close-btn" id="guide-close">&times;</span>
+            <h2>📖 게임 가이드</h2>
+
+            <div class="guide-section">
+                <h3>🎒 아이템 도감</h3>
+                <ul>
+                    <li><span class="icon">⚡</span> <strong>스피드</strong>: 5초간 이동 속도가 엄청 빨라집니다.</li>
+                    <li><span class="icon">🍌</span> <strong>바나나</strong>: 밟으면 미끄러져서 제어가 안 됩니다.</li>
+                    <li><span class="icon">🛡️</span> <strong>방어막</strong>: 술래에게 한번 잡히는 걸 막아줍니다.</li>
+                </ul>
+            </div>
+
+            <div class="guide-section">
+                <h3>🤖 봇 성격 분석</h3>
+                <ul>
+                    <li><strong style="color:#e74c3c">공격형 (Aggressive)</strong>: 집요하게 쫓아오며 스피드 아이템을 좋아합니다.</li>
+                    <li><strong style="color:#f1c40f">신중형 (Careful)</strong>: 겁이 많아 멀리서부터 도망치고 방어막을 챙깁니다.</li>
+                    <li><strong style="color:#9b59b6">장난꾸러기 (Playful)</strong>: 예측불가! 바나나를 여기저기 뿌리고 다닙니다.</li>
+                    <li><strong style="color:#3498db">겁쟁이 (Coward)</strong>: 사람이 보이면 무조건 도망갑니다! (술래는 더 무서워함)</li>
+                </ul>
+            </div>
+            <p style="text-align: center; color: #7f8c8d; margin-top: 10px; font-size: 0.9em;">TIP: `/fog`를 입력하면 시야 제한을
+                끄고 켤 수 있습니다.</p>
+        </div>
+    </div>
+
     <!-- 피드백 버튼 & 모달 -->
     <button id="feedback-btn"
         style="position: fixed; bottom: 20px; right: 20px; padding: 10px 15px; border-radius: 20px; border: none; background: #e67e22; color: white; font-weight: bold; cursor: pointer; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">📢

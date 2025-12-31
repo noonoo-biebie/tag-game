@@ -374,3 +374,99 @@ canvas {
         opacity: 1;
     }
 }
+
+/* 가이드 모달 스타일 */
+.modal {
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(3px);
+    animation: fadeIn 0.3s;
+}
+
+.modal-content.guide-content {
+    background-color: #2c3e50;
+    margin: 10% auto;
+    padding: 30px;
+    border: 1px solid #7f8c8d;
+    width: 90%;
+    max-width: 500px;
+    border-radius: 12px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+    color: white;
+    position: relative;
+    text-align: left;
+}
+
+.guide-content h2 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #f1c40f;
+    border-bottom: 2px solid #34495e;
+    padding-bottom: 15px;
+}
+
+.guide-section {
+    margin-bottom: 25px;
+}
+
+.guide-section h3 {
+    color: #bdc3c7;
+    margin-bottom: 12px;
+    font-size: 1.1em;
+    border-left: 4px solid #3498db;
+    padding-left: 10px;
+}
+
+.guide-section ul {
+    list-style: none;
+    padding: 0;
+}
+
+.guide-section li {
+    margin-bottom: 10px;
+    font-size: 0.95em;
+    line-height: 1.5;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 10px;
+    border-radius: 6px;
+}
+
+.guide-section .icon {
+    font-size: 1.2em;
+    margin-right: 8px;
+    display: inline-block;
+    width: 25px;
+    text-align: center;
+}
+
+.close-btn {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    position: absolute;
+    top: 15px;
+    right: 20px;
+    transition: color 0.2s;
+}
+
+.close-btn:hover {
+    color: white;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
