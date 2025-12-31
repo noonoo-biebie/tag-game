@@ -65,6 +65,8 @@ feedbackSend.addEventListener('click', () => {
 
 // --- 로그인(입장) 로직 ---
 
+let showShadows = true; // [개발자 치트] 그림자 토글 변수
+
 startBtn.addEventListener('click', () => {
     let nickname = nicknameInput.value.trim();
     if (!nickname) {
@@ -82,8 +84,21 @@ chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
         const msg = chatInput.value.trim();
         if (msg) {
+            // [개발자 치트] 그림자 토글
+            if (msg === '/fog') {
+                showShadows = !showShadows;
+                const status = showShadows ? 'ON' : 'OFF';
+                const div = document.createElement('div');
+                div.innerHTML = `<span style="color:#e74c3c; font-weight:bold;">System:</span> 전장의 안개 ${status}`;
+                chatMessages.appendChild(div);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                chatInput.value = '';
+                return;
+            }
+
             socket.emit('chatMessage', msg);
             chatInput.value = '';
+            chatInput.blur(); // 채팅 입력 후 포커스 해제 (즉시 이동 가능)
         }
     }
 });
@@ -582,9 +597,95 @@ function update(timestamp) {
     drawItems();     // 아이템 그리기
     drawTraps();     // 트랩 그리기
     drawPlayers();
+    drawShadows();   // 그림자(시야 제한) 효과
     drawInventory(); // 인벤토리 그리기
 
     requestAnimationFrame(update);
+}
+
+// 그림자(시야 제한) 효과 - Even-Odd Rule 적용
+function drawShadows() {
+    if (!isJoined || !players[socket.id]) return;
+    if (!showShadows) return; // 개발자 명령어로 꺼짐 확인
+
+    const p = players[socket.id];
+    const cx = p.x + TILE_SIZE / 2;
+    const cy = p.y + TILE_SIZE / 2;
+
+    const points = [];
+
+    // 1. Raycasting (그림자 다각형 생성용) - 정밀도 향상
+    // 각도 간격을 0.05 -> 0.015로 촘촘하게 (부드러운 경계)
+    for (let angle = 0; angle < Math.PI * 2; angle += 0.015) {
+        const result = castRay(cx, cy, angle);
+        points.push(result);
+    }
+    points.push(castRay(cx, cy, 0));
+
+    ctx.save();
+
+    // 2. 그림자 마스크 그리기
+    ctx.beginPath();
+    ctx.rect(0, 0, canvas.width, canvas.height); // 전체 화면
+
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.closePath();
+
+    // 외부는 어둡게,내부는 투명하게 (도넛) -> 둥근 모서리 처리
+    ctx.lineJoin = 'round';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
+    ctx.fill('evenodd');
+
+    // 3. "모든 벽" 덧칠하기 (사용자 요청: 벽은 무조건 보이게)
+    ctx.fillStyle = '#7f8c8d'; // 벽 색상
+    ctx.strokeStyle = '#555';  // 벽 테두리
+    ctx.lineWidth = 1;
+
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            if (map[r][c] === 1) { // 벽이라면 무조건 그림
+                const x = c * TILE_SIZE;
+                const y = r * TILE_SIZE;
+
+                // 그림자 위에 덮어쓰기
+                ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+            }
+        }
+    }
+
+    ctx.restore();
+}
+
+function castRay(x, y, angle) {
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+
+    let curX = x;
+    let curY = y;
+
+    const range = 1000;
+    const step = 2; // [정밀도 향상] 8 -> 2 (벽 모서리 인식 개선)
+
+    for (let i = 0; i < range; i += step) {
+        curX += dx * step;
+        curY += dy * step;
+
+        const c = Math.floor(curX / TILE_SIZE);
+        const r = Math.floor(curY / TILE_SIZE);
+
+        if (c < 0 || c >= COLS || r < 0 || r >= ROWS) {
+            return { x: curX, y: curY };
+        }
+
+        if (map[r][c] === 1) {
+            return { x: curX, y: curY };
+        }
+    }
+    return { x: curX, y: curY };
 }
 
 
@@ -659,8 +760,15 @@ function updateStatus(isConnected) {
     if (isConnected) {
         statusIndicator.style.backgroundColor = '#2ecc71';
         statusIndicator.style.boxShadow = '0 0 10px #2ecc71';
-    } else {
-        statusIndicator.style.backgroundColor = '#e74c3c';
         statusIndicator.style.boxShadow = '0 0 10px #e74c3c';
     }
 }
+
+// 채팅 단축키 (/)
+window.addEventListener('keydown', (e) => {
+    // 채팅창이 아닌 곳에서 / 키를 누르면 채팅창으로 포커스
+    if (e.key === '/' && document.activeElement !== chatInput) {
+        e.preventDefault(); // / 문자 입력 방지
+        chatInput.focus();
+    }
+});
