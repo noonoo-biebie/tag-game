@@ -91,20 +91,37 @@ class Bot {
     }
 
     update() {
-        // 1. 미끄러짐 처리
+        // [0] 기절 상태 체크
+        if (this.stunnedUntil && Date.now() < this.stunnedUntil) return;
+
+        // 1. 미끄러짐 처리 (속도 25, 10초 제한, 벽 충돌 시 정지)
         if (this.isSlipped) {
-            const slipSpeed = 10;
+            // 10초 안전 장치
+            if (Date.now() - this.slipStartTime > 10000) {
+                this.isSlipped = false;
+                return;
+            }
+
+            const slipSpeed = 25;
             let nextX = this.x + this.slipDir.x * slipSpeed;
             let nextY = this.y + this.slipDir.y * slipSpeed;
 
+            // 맵 경계 체크
             if (nextX < 0) nextX = 0; else if (nextX > (COLS - 1) * TILE_SIZE) nextX = (COLS - 1) * TILE_SIZE;
             if (nextY < 0) nextY = 0; else if (nextY > (ROWS - 1) * TILE_SIZE) nextY = (ROWS - 1) * TILE_SIZE;
 
+            // 벽 충돌 감지 강화 (모서리 끼임 방지)
             if (checkBotWallCollision(nextX, nextY)) {
                 this.isSlipped = false;
             } else {
-                this.x = nextX;
-                this.y = nextY;
+                // 이동 했으나, 위치 변화가 거의 없다면 (구석에 낌) 정지
+                const distMoved = Math.hypot(this.x - nextX, this.y - nextY);
+                if (distMoved < 0.1) {
+                    this.isSlipped = false;
+                } else {
+                    this.x = nextX;
+                    this.y = nextY;
+                }
             }
             return;
         }
@@ -123,16 +140,33 @@ class Bot {
             const visibleTarget = this.findBestTarget(); // 시야 내 타겟
 
             if (visibleTarget) {
-                // [추격] 타겟 보임 -> 무조건 직진 & 기억 갱신
+                // [추격] 타겟 보임 -> 기억 갱신
                 this.patrolTarget = null;
                 this.chaseMemory = { x: visibleTarget.x, y: visibleTarget.y };
 
-                // 직접 이동
-                const dx = visibleTarget.x - this.x;
-                const dy = visibleTarget.y - this.y;
-                const angle = Math.atan2(dy, dx);
-                this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-                this.moveToDir();
+                // [수정] 끼임 감지 시 "좌우로 비비기" (Random Wiggle)
+                // 사용자의 요청: "벽에 박고 있으면 좌우로 왔다갔다" -> 무작위 이동으로 탈출 유도
+                if (this.isStuck) {
+                    if (!this.wiggleTimer || Date.now() - this.wiggleTimer > 300) {
+                        // 0.3초마다 랜덤 방향 전환
+                        const angle = Math.random() * Math.PI * 2;
+                        this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+                        this.wiggleTimer = Date.now();
+                    }
+                    this.moveToDir();
+                } else {
+                    // [정상] 직선 추격
+                    // this.wiggleTimer = 0; // 필요 시 리셋
+
+                    const dx = visibleTarget.x - this.x;
+                    const dy = visibleTarget.y - this.y;
+                    const angle = Math.atan2(dy, dx);
+                    this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+
+                    // 성격별 거리 체크 등은 moveToDir 내부 속도나 외부 로직으로 처리됨.
+                    // 단순하게 직진
+                    this.moveToDir();
+                }
 
             } else if (this.chaseMemory) {
                 // [수색] 안 보임 -> 마지막 위치로 직진
@@ -710,6 +744,11 @@ function handleJoinGame(socket, data) {
 }
 
 function handlePlayerMove(socket, movementData) {
+    // 0. 기절 상태 체크
+    if (players[socket.id] && players[socket.id].stunnedUntil && Date.now() < players[socket.id].stunnedUntil) {
+        return;
+    }
+
     if (players[socket.id]) {
         players[socket.id].x = movementData.x;
         players[socket.id].y = movementData.y;
@@ -768,8 +807,7 @@ function handleChatMessage(socket, msg) {
     }
 }
 
-// 충돌(태그) 판정 (쿨타임 적용)
-let canTag = true;
+// 충돌(태그) 판정
 
 // 트랩(바나나) 시스템
 let traps = {};
@@ -834,20 +872,21 @@ function checkTrapCollision(playerId) {
             io.emit('gameMessage', `[${player.nickname}] 님이 바나나를 밟고 미끄러집니다! 으악!`);
 
             // 미끄러짐 효과 전송 (2초)
-            // 미끄러짐 효과 전송 (2초)
+            // 미끄러짐 효과 전송 (벽까지 or 최대 10초)
             if (players[playerId] instanceof Bot) {
                 const bot = players[playerId];
                 bot.isSlipped = true;
+                bot.slipStartTime = Date.now(); // [수정] 시작 시간 기록
+
                 // 현재 이동 방향으로 미끄러짐
                 bot.slipDir = { ...bot.moveDir };
                 if (bot.slipDir.x === 0 && bot.slipDir.y === 0) {
-                    bot.slipDir = { x: Math.random() < 0.5 ? 1 : -1, y: 0 }; // 멈춰있었다면 랜덤
+                    bot.slipDir = { x: Math.random() < 0.5 ? 1 : -1, y: 0 };
                 }
-                setTimeout(() => {
-                    if (players[playerId]) players[playerId].isSlipped = false;
-                }, 2000);
+                // [수정] setTimeout 제거 -> update()에서 처리
             } else {
-                io.to(playerId).emit('playerSlipped', { duration: 2000 });
+                // 플레이어에게 10초(넉넉히) 전송 -> 클라이언트가 벽 충돌 시 멈춤
+                io.to(playerId).emit('playerSlipped', { duration: 10000 });
             }
             break;
         }
@@ -855,7 +894,7 @@ function checkTrapCollision(playerId) {
 }
 
 function checkCollision(moverId) {
-    if (!canTag) return;
+    // 쿨타임(canTag) 제거됨 -> 기절(Stun) 로직으로 대체
 
     const ids = Object.keys(players);
     if (ids.length < 2) return;
@@ -866,6 +905,10 @@ function checkCollision(moverId) {
     for (const id of ids) {
         if (id !== taggerId) {
             const runner = players[id];
+
+            // [추가] 술래가 기절 상태면 태그 불가
+            if (tagger.stunnedUntil && Date.now() < tagger.stunnedUntil) continue;
+
             const dx = tagger.x - runner.x;
             const dy = tagger.y - runner.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
@@ -876,26 +919,24 @@ function checkCollision(moverId) {
                     runner.hasShield = false;
                     io.to(id).emit('itemEffect', { type: 'shield', on: false });
                     io.emit('gameMessage', `[${runner.nickname}] 님이 방어막으로 태그를 막았습니다!`);
-                    canTag = false;
-                    setTimeout(() => { canTag = true; }, 1000);
+
+                    // 태그 실패 시 술래 잠깐 넉백/경직 (선택사항, 일단 유지)
+                    tagger.stunnedUntil = Date.now() + 1000; // 1초 경직
                     return;
                 }
 
                 // 태그 성공
                 const oldTaggerId = taggerId;
-                lastTaggerId = oldTaggerId; // 봇이 이 사람을 바로 쫓지 않게 설정
+                lastTaggerId = oldTaggerId;
                 setTimeout(() => { if (lastTaggerId === oldTaggerId) lastTaggerId = null; }, 5000);
 
+                // 새 술래 지정
                 taggerId = id;
+                players[taggerId].stunnedUntil = Date.now() + 2000; // [수정] 2초 기절
+
                 io.emit('updateTagger', taggerId);
                 io.emit('tagOccurred', { newTaggerId: taggerId });
-                io.emit('gameMessage', `[${tagger.nickname}] -> [${runner.nickname}] 태그! (3초 무적)`);
-
-                canTag = false;
-                setTimeout(() => {
-                    canTag = true;
-                    io.emit('gameMessage', `술래 무적 해제!`);
-                }, 3000);
+                io.emit('gameMessage', `[${tagger.nickname}] -> [${runner.nickname}] 태그! (새 술래 2초 기절)`);
                 break;
             }
         }

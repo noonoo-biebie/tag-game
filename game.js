@@ -273,7 +273,7 @@ socket.on('chatMessage', (data) => {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 });
 
-socket.on('tagOccurred', () => {
+socket.on('tagOccurred', (data) => {
     if (!isJoined) return;
 
     // 1. 화면 흔들림 효과
@@ -282,14 +282,26 @@ socket.on('tagOccurred', () => {
         gameContainer.classList.remove('shake-effect');
     }, 500);
 
-    // 2. 텍스트 오버레이 표시
+    // 2. 기절 처리 (내가 새 술래라면)
+    if (data.newTaggerId === socket.id) {
+        isStunned = true;
+        setTimeout(() => {
+            isStunned = false;
+        }, 2000);
+    }
+
+    // 3. 텍스트 오버레이 표시
     const overlay = document.getElementById('tagged-overlay');
     if (overlay) {
         overlay.style.display = 'block';
-        overlay.innerText = "술래 체인지!";
+        if (data.newTaggerId === socket.id) {
+            overlay.innerText = "술래 당첨!\n(2초 기절)";
+        } else {
+            overlay.innerText = "술래 체인지!";
+        }
         setTimeout(() => {
             overlay.style.display = 'none';
-        }, 1500);
+        }, 2000);
     }
 });
 
@@ -507,9 +519,11 @@ function checkWallCollision(newX, newY) {
 }
 
 let lastEmitTime = 0;
+let isStunned = false; // [추가] 기절 상태
 
 function processInput(deltaTimeSec) {
     if (!isJoined || !players[socket.id]) return;
+    if (isStunned) return; // [추가] 기절 시 조작 불가
 
     let dx = 0; let dy = 0;
 
