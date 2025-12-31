@@ -14,6 +14,198 @@ app.get('/', (req, res) => {
 
 let players = {};
 let taggerId = null;
+let lastTaggerId = null; // 최근 술래 (봇 무한 추격 방지용)
+
+// --- AI 봇 시스템 ---
+const BOT_PERSONALITIES = {
+    AGGRESSIVE: 'aggressive', // 공격형: 끈질긴 추격, 아이템 즉시 사용
+    CAREFUL: 'careful',       // 신중형: 도주 우선, 쉴드 선호
+    PLAYFUL: 'playful'        // 장난꾸러기: 랜덤 행동, 바나나 설치
+};
+
+class Bot {
+    constructor(id) {
+        this.id = id;
+        this.playerId = id; // 클라이언트 호환성
+        this.nickname = '🤖Bot_' + id.slice(0, 4);
+        this.color = this.getRandomColor();
+        this.personality = this.getRandomPersonality();
+
+        const spawn = getRandomSpawn();
+        this.x = spawn.x;
+        this.y = spawn.y;
+        this.targetX = this.x; // 이동 목표
+        this.targetY = this.y;
+
+        // 상태
+        this.hasItem = null;
+        this.hasShield = false;
+        this.isSpeeding = false;
+        this.isSlipped = false; // 미끄러짐 상태 추가
+
+        // AI 제어 변수
+        this.lastMoveTime = 0;
+        this.changeDirTime = 0;
+        this.moveDir = { x: 0, y: 0 };
+    }
+
+    getRandomColor() {
+        const colors = ['#e67e22', '#1abc9c', '#9b59b6', '#e84393', '#f1c40f', '#3498db']; // 밝고 선명한 색상들
+        return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    getRandomPersonality() {
+        const types = Object.values(BOT_PERSONALITIES);
+        return types[Math.floor(Math.random() * types.length)];
+    }
+
+    update() {
+        if (this.isSlipped) return; // 미끄러짐 상태면 이동 불가
+
+        // 봇 AI 로직 (틱마다 호출)
+        // 1. 목표 설정 (추격/도주/배회)
+        if (taggerId === this.id) {
+            this.chaseTarget(); // 술래일 때
+        } else {
+            this.fleeOrWander(); // 생존자일 때
+        }
+
+        // 2. 이동 실행 (속도 보정: 클라이언트 60fps * 3px ~= 180px/sec. 서버 10fps 이므로 틱당 18px 필요)
+        const speed = this.isSpeeding ? 25 : 15;
+
+        // X축 이동 시도
+        let nextX = this.x + this.moveDir.x * speed;
+        // 맵 경계 체크
+        if (nextX < 0) nextX = 0;
+        if (nextX > (COLS - 1) * TILE_SIZE) nextX = (COLS - 1) * TILE_SIZE;
+
+        if (checkBotWallCollision(nextX, this.y)) {
+            // X축 막힘 -> 멈추고 방향 전환 검토
+            // nextX = this.x; // (부드러운 슬라이딩을 위해 막히면 이동 안함)
+            // 벽에 비비지 않게 랜덤 반사 or 캔슬
+            this.changeDirection();
+        } else {
+            this.x = nextX;
+        }
+
+        // Y축 이동 시도
+        let nextY = this.y + this.moveDir.y * speed;
+        if (nextY < 0) nextY = 0;
+        if (nextY > (ROWS - 1) * TILE_SIZE) nextY = (ROWS - 1) * TILE_SIZE;
+
+        if (checkBotWallCollision(this.x, nextY)) {
+            this.changeDirection();
+        } else {
+            this.y = nextY;
+        }
+
+        // 3. 아이템 사용 로직 (성격 반영)
+        this.useItemLogic();
+    }
+
+    chaseTarget() {
+        // 가장 가까운 플레이어 찾기
+        let closest = null;
+        let minDist = Infinity;
+
+        for (const pid in players) {
+            if (pid === this.id) continue;
+            // 방금 나를 잡은 사람(또는 내가 잡은 사람)은 잠시 무시
+            if (pid === lastTaggerId) continue;
+
+            const p = players[pid];
+            const dist = Math.hypot(p.x - this.x, p.y - this.y);
+            if (dist < minDist) {
+                minDist = dist;
+                closest = p;
+            }
+        }
+
+        if (closest) {
+            // 타겟 방향으로 이동
+            const dx = closest.x - this.x;
+            const dy = closest.y - this.y;
+            const angle = Math.atan2(dy, dx);
+
+            // 약간의 랜덤성 추가 (완벽한 추적 방지)
+            this.moveDir.x = Math.cos(angle);
+            this.moveDir.y = Math.sin(angle);
+        } else {
+            this.wander();
+        }
+    }
+
+    fleeOrWander() {
+        if (!taggerId) return this.wander();
+
+        const tagger = players[taggerId];
+        if (!tagger) return this.wander();
+
+        const dist = Math.hypot(tagger.x - this.x, tagger.y - this.y);
+
+        if (dist < 200) { // 술래가 가까우면 도주
+            const dx = this.x - tagger.x;
+            const dy = this.y - tagger.y;
+            const angle = Math.atan2(dy, dx);
+            this.moveDir.x = Math.cos(angle);
+            this.moveDir.y = Math.sin(angle);
+        } else {
+            this.wander();
+        }
+    }
+
+    wander() {
+        if (Date.now() > this.changeDirTime) {
+            this.changeDirection();
+        }
+    }
+
+    changeDirection() {
+        // 플레이어처럼 8방향 중 하나로 이동 (대각선 포함)
+        const dirs = [
+            { x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }, // 상하좌우
+            { x: 0.7, y: -0.7 }, { x: 0.7, y: 0.7 }, { x: -0.7, y: -0.7 }, { x: -0.7, y: 0.7 } // 대각선
+        ];
+        this.moveDir = dirs[Math.floor(Math.random() * dirs.length)];
+        this.changeDirTime = Date.now() + 1000 + Math.random() * 2000;
+    }
+
+    useItemLogic() {
+        if (!this.hasItem) return;
+
+        // 성격별 사용 확률
+        let useChance = 0.05; // 틱당 5% (빈도 상향)
+
+        if (this.personality === BOT_PERSONALITIES.AGGRESSIVE) {
+            if (this.hasItem === 'speed') useChance = 0.2; // 공격형은 스피드 좋아함
+        } else if (this.personality === BOT_PERSONALITIES.PLAYFUL) {
+            if (this.hasItem === 'banana') useChance = 0.1; // 장난꾸러기는 바나나 설치
+        }
+
+        if (Math.random() < useChance) {
+            handleItemEffect(this.id, this.hasItem);
+            this.hasItem = null;
+            // 봇은 클라이언트 UI 업데이트 불필요
+        }
+    }
+}
+
+// 봇 충돌 체크 (BOUNDING BOX)
+function checkBotWallCollision(x, y) {
+    // 플레이어 크기 (TILE_SIZE) 만큼 4지점 체크
+    const points = [
+        { c: Math.floor((x + 2) / TILE_SIZE), r: Math.floor((y + 2) / TILE_SIZE) }, // 좌상단 (+padding)
+        { c: Math.floor((x + TILE_SIZE - 2) / TILE_SIZE), r: Math.floor((y + 2) / TILE_SIZE) }, // 우상단
+        { c: Math.floor((x + 2) / TILE_SIZE), r: Math.floor((y + TILE_SIZE - 2) / TILE_SIZE) }, // 좌하단
+        { c: Math.floor((x + TILE_SIZE - 2) / TILE_SIZE), r: Math.floor((y + TILE_SIZE - 2) / TILE_SIZE) } // 우하단
+    ];
+
+    for (const p of points) {
+        if (p.r < 0 || p.r >= ROWS || p.c < 0 || p.c >= COLS) return true; // 맵 밖
+        if (map[p.r][p.c] === 1) return true; // 벽
+    }
+    return false;
+}
 const TILE_SIZE = 32;
 
 // --- 아이템 시스템 ---
@@ -81,6 +273,37 @@ setInterval(() => {
 setTimeout(() => {
     spawnItem(); spawnItem();
 }, 1000);
+
+// 봇 업데이트 루프 (약 10fps)
+setInterval(() => {
+    Object.keys(players).forEach(id => {
+        if (players[id] instanceof Bot) {
+            players[id].update();
+
+            // 위치 동기화 및 상호작용 체크
+            io.emit('playerMoved', players[id]);
+            checkCollision(id);
+            checkItemCollection(id);
+            checkTrapCollision(id);
+        }
+    });
+}, 100);
+
+function createBot() {
+    const botId = 'bot_' + Date.now();
+    const bot = new Bot(botId);
+    players[botId] = bot;
+
+    io.emit('newPlayer', bot);
+    io.emit('gameMessage', `🤖 [${bot.personality}] 성격의 봇이 입장했습니다!`);
+
+    // 술래 없으면 참여
+    if (!taggerId) {
+        taggerId = botId;
+        io.emit('updateTagger', taggerId);
+        io.emit('gameMessage', `[${bot.nickname}] 님이 첫 술래입니다!`);
+    }
+}
 
 
 // 맵 데이터
@@ -212,6 +435,12 @@ function handleDisconnect(socket) {
 
 function handleChatMessage(socket, msg) {
     if (players[socket.id]) {
+        // 봇 소환 명령어
+        if (msg.trim() === '/bot' || msg.trim() === '/addbot') {
+            createBot();
+            return;
+        }
+
         const nickname = players[socket.id].nickname;
         io.emit('chatMessage', {
             nickname: nickname,
@@ -287,7 +516,14 @@ function checkTrapCollision(playerId) {
             io.emit('gameMessage', `[${player.nickname}] 님이 바나나를 밟고 미끄러집니다! 으악!`);
 
             // 미끄러짐 효과 전송 (2초)
-            io.to(playerId).emit('playerSlipped', { duration: 2000 });
+            if (players[playerId] instanceof Bot) {
+                players[playerId].isSlipped = true;
+                setTimeout(() => {
+                    if (players[playerId]) players[playerId].isSlipped = false;
+                }, 2000);
+            } else {
+                io.to(playerId).emit('playerSlipped', { duration: 2000 });
+            }
             break;
         }
     }
@@ -319,6 +555,11 @@ function checkCollision(moverId) {
                     setTimeout(() => { canTag = true; }, 1000);
                     return;
                 }
+
+                // 태그 성공
+                const oldTaggerId = taggerId;
+                lastTaggerId = oldTaggerId; // 봇이 이 사람을 바로 쫓지 않게 설정
+                setTimeout(() => { if (lastTaggerId === oldTaggerId) lastTaggerId = null; }, 5000);
 
                 taggerId = id;
                 io.emit('updateTagger', taggerId);
