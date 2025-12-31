@@ -896,7 +896,7 @@ function handleChatMessage(socket, msg) {
             resetRequesterId = null;
         } else {
             // 요청
-            resetRequesterId = now;
+            resetRequesterId = socket.id;
             resetRequestTime = now;
             const warnMsg = "⚠️ 5초 안에 '/reset'을 한번 더 입력하면 초기화됩니다.";
             socket.emit('gameMessage', warnMsg);
