@@ -182,16 +182,22 @@ socket.on('itemEffect', (data) => {
 socket.on('playerSlipped', (data) => {
     isSlipped = true;
 
-    // 현재 이동 중이던 방향 유지 (없으면 랜덤?)
-    // processInput에서 계산된 최근 dx, dy를 저장해두거나 여기서 임의 설정
-    // 간단히: 최근 입력 키를 기반으로 방향 추정 or 랜덤
     let dx = 0, dy = 0;
-    if (keys['arrowup'] || keys['w']) dy = -1;
-    else if (keys['arrowdown'] || keys['s']) dy = 1;
-    else if (keys['arrowleft'] || keys['a']) dx = -1;
-    else if (keys['arrowright'] || keys['d']) dx = 1;
 
-    // 정지 상태였다면 랜덤 방향으로 미끄러짐 (꿀잼 요소)
+    // 1. 조이스틱 입력 확인
+    if (joystickData.active) {
+        dx = joystickData.dx;
+        dy = joystickData.dy;
+    }
+    // 2. 키보드 입력 확인
+    else {
+        if (keys['arrowup'] || keys['w']) dy = -1;
+        else if (keys['arrowdown'] || keys['s']) dy = 1;
+        else if (keys['arrowleft'] || keys['a']) dx = -1;
+        else if (keys['arrowright'] || keys['d']) dx = 1;
+    }
+
+    // 3. 입력이 없으면 랜덤 방향 (이전 버그: 여기서 dx=0, dy=0이면 아무것도 안 하거나 이상해짐)
     if (dx === 0 && dy === 0) {
         const dirs = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
         const rand = dirs[Math.floor(Math.random() * dirs.length)];
@@ -199,12 +205,13 @@ socket.on('playerSlipped', (data) => {
     }
 
     // 정규화
-    if (dx !== 0 && dy !== 0) {
+    if (dx !== 0 || dy !== 0) {
         const len = Math.sqrt(dx * dx + dy * dy);
         dx /= len; dy /= len;
     }
 
     slipVelocity = { x: dx, y: dy };
+
 
     setTimeout(() => {
         isSlipped = false;
@@ -473,8 +480,16 @@ function processInput(deltaTimeSec) {
         // 미끄러지는 중: 키 입력 무시, 강제 이동
         dx = slipVelocity.x;
         dy = slipVelocity.y;
+    } else if (joystickData.active) {
+        // 조이스틱 입력 우선
+        dx = joystickData.dx;
+        dy = joystickData.dy;
+        // 조이스틱은 이미 정규화된 벡터(vector.x, vector.y)를 주거나 force에 따라 다를 수 있음.
+        // nipple.js vector is normalized unit vector direction.
+        // We can multiply speed by force if we want analog speed control, 
+        // but for now let's keep it max speed for simplicity, or simple threshold.
     } else {
-        // 정상 상태
+        // 키보드/정상 상태
         if (keys['arrowup'] || keys['w']) dy = -1;
         if (keys['arrowdown'] || keys['s']) dy = 1;
         if (keys['arrowleft'] || keys['a']) dx = -1;
@@ -575,29 +590,63 @@ function update(timestamp) {
 
 // --- 모바일 및 UI 유틸 ---
 
-const btnUp = document.getElementById('btn-up');
-const btnDown = document.getElementById('btn-down');
-const btnLeft = document.getElementById('btn-left');
-const btnRight = document.getElementById('btn-right');
-
-function handleMobileInput(key, isPressed) {
-    if (!isJoined) return;
-    keys[key] = isPressed;
+// 아이템 버튼
+const mobileItemBtn = document.getElementById('mobile-item-btn');
+if (mobileItemBtn) {
+    mobileItemBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        socket.emit('useItem');
+        mobileItemBtn.style.transform = 'scale(0.9)';
+    });
+    mobileItemBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        mobileItemBtn.style.transform = 'scale(1)';
+    });
 }
 
-function addMobileListeners(btn, key) {
-    if (!btn) return;
-    btn.addEventListener('touchstart', (e) => { e.preventDefault(); handleMobileInput(key, true); });
-    btn.addEventListener('touchend', (e) => { e.preventDefault(); handleMobileInput(key, false); });
-    btn.addEventListener('mousedown', (e) => { e.preventDefault(); handleMobileInput(key, true); });
-    btn.addEventListener('mouseup', (e) => { e.preventDefault(); handleMobileInput(key, false); });
-    btn.addEventListener('mouseleave', (e) => { handleMobileInput(key, false); });
+// 조이스틱 (nipple.js)
+let joystickManager = null;
+let joystickData = { angle: 0, force: 0, active: false };
+
+// 조이스틱 초기화 함수
+function initJoystick() {
+    const zone = document.getElementById('joystick-zone');
+    if (!zone) return;
+
+    // 이미 생성되었으면 스킵
+    if (joystickManager) return;
+
+    joystickManager = nipplejs.create({
+        zone: zone,
+        mode: 'dynamic', // 터치하는 곳에 생성 (가장 직관적)
+        color: 'white',
+        size: 100,
+        threshold: 0.1 // 너무 민감하지 않게
+    });
+
+    joystickManager.on('move', (evt, data) => {
+        if (data && data.vector) {
+            joystickData.active = true;
+            // nipple.js vector: {x, y} unit vector.
+            // 보통 Up은 y=1 (수학적), Canvas는 Up= y=-1.
+            // 따라서 y를 반전시켜야 함.
+            joystickData.dx = data.vector.x;
+            joystickData.dy = -data.vector.y;
+            joystickData.force = Math.min(data.force, 2.0);
+        }
+    });
+
+    joystickManager.on('end', () => {
+        joystickData.active = false;
+        joystickData.dx = 0;
+        joystickData.dy = 0;
+    });
 }
 
-addMobileListeners(btnUp, 'arrowup');
-addMobileListeners(btnDown, 'arrowdown');
-addMobileListeners(btnLeft, 'arrowleft');
-addMobileListeners(btnRight, 'arrowright');
+// 모바일 접속 시 조이스틱 초기화 (터치 이벤트 발생 시 시도)
+document.addEventListener('touchstart', initJoystick, { once: true });
+// 혹은 로드 시 바로 시도 (zone이 있으므로)
+setTimeout(initJoystick, 1000);
 
 function showError(msg) {
     errorLog.style.display = 'block';

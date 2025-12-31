@@ -52,16 +52,14 @@
         <div id="error-log"></div>
         <div id="status-indicator"></div>
 
-        <!-- 모바일 컨트롤 (화면 작을 때만 표시) -->
+        <!-- 모바일 컨트롤 (조이스틱 & 버튼) -->
         <div id="mobile-controls">
-            <div id="dpad">
-                <button id="btn-up" class="dpad-btn">▲</button>
-                <button id="btn-left" class="dpad-btn">◀</button>
-                <button id="btn-center" class="dpad-btn"></button> <!-- 빈 공간 -->
-                <button id="btn-right" class="dpad-btn">▶</button>
-                <button id="btn-down" class="dpad-btn">▼</button>
-            </div>
+            <div id="joystick-zone"></div>
+            <button id="mobile-item-btn">⚡ USE</button>
         </div>
+
+        <!-- Nipple.js (Virtual Joystick) -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
     </div>
 
     <!-- 피드백 버튼 & 모달 -->
