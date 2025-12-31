@@ -231,10 +231,22 @@ socket.on('chatMessage', (data) => {
 
 socket.on('tagOccurred', () => {
     if (!isJoined) return;
-    document.body.style.backgroundColor = '#c0392b';
+
+    // 1. 화면 흔들림 효과
+    gameContainer.classList.add('shake-effect');
     setTimeout(() => {
-        document.body.style.backgroundColor = '#2c3e50';
-    }, 200);
+        gameContainer.classList.remove('shake-effect');
+    }, 500);
+
+    // 2. 텍스트 오버레이 표시
+    const overlay = document.getElementById('tagged-overlay');
+    if (overlay) {
+        overlay.style.display = 'block';
+        overlay.innerText = "술래 체인지!";
+        setTimeout(() => {
+            overlay.style.display = 'none';
+        }, 1500);
+    }
 });
 
 socket.on('connect', () => {
@@ -351,10 +363,10 @@ function drawPlayers() {
             ctx.fillText('술래', p.x + 4, p.y - 6);
         }
 
-        ctx.fillStyle = '#fff';
-        ctx.font = '12px "Noto Sans KR", sans-serif';
+        ctx.fillStyle = (id === taggerId) ? '#e74c3c' : '#fff';
+        ctx.font = (id === taggerId) ? 'bold 14px "Noto Sans KR", sans-serif' : '12px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'center';
-        const nicknameY = (id === taggerId) ? p.y - 20 : p.y - 6;
+        const nicknameY = (id === taggerId) ? p.y - 22 : p.y - 6;
         ctx.fillText(p.nickname, p.x + TILE_SIZE / 2, nicknameY);
         ctx.textAlign = 'start';
 

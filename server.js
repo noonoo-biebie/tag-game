@@ -22,7 +22,11 @@ let itemNextId = 1;
 const ITEM_TYPES = ['speed', 'banana', 'shield'];
 
 function spawnItem() {
-    if (Object.keys(items).length >= 5) return;
+    if (Object.keys(items).length >= 5) {
+        // 가장 오래된 아이템(ID가 가장 작은 것) 삭제
+        const oldestId = Object.keys(items).sort((a, b) => a - b)[0];
+        delete items[oldestId];
+    }
 
     const pos = getRandomSpawn();
     const id = itemNextId++;
