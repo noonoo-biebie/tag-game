@@ -39,6 +39,9 @@ class Bot {
         // 추격 기억 시스템 (Last Known Position)
         this.chaseMemory = null; // { x, y, id, timestamp }
 
+        // 도망 상태 (Hysteresis)
+        this.isFleeing = false;
+
         // 비비기 타이머
         this.wiggleTimer = 0;
     }
@@ -162,9 +165,26 @@ class Bot {
             // [도망자]
             if (taggerId && players[taggerId]) {
                 const tagger = players[taggerId];
-                if (Math.hypot(tagger.x - this.x, tagger.y - this.y) < 250 &&
-                    checkLineOfSight(this.x + 16, this.y + 16, tagger.x + 16, tagger.y + 16, mapData)) {
+                const dist = Math.hypot(tagger.x - this.x, tagger.y - this.y);
 
+                // 시야 체크 (효율화를 위해 350 거리 밖에서는 체크 안함)
+                let canSeeTagger = false;
+                if (dist < 350) {
+                    if (checkLineOfSight(this.x + 16, this.y + 16, tagger.x + 16, tagger.y + 16, mapData)) {
+                        canSeeTagger = true;
+                    }
+                }
+
+                // 히스테리시스 상태 업데이트
+                if (this.isFleeing) {
+                    // 도망 중이면: 거리가 350 이상 멀어지거나, 시야에서 사라져도 (일단 거리가 멀어질 때까지 도망)
+                    if (dist > 350) this.isFleeing = false;
+                } else {
+                    // 평시: 거리가 250 이내이고 보이면 도망 시작
+                    if (dist < 250 && canSeeTagger) this.isFleeing = true;
+                }
+
+                if (this.isFleeing) {
                     const dx = this.x - tagger.x;
                     const dy = this.y - tagger.y;
                     const angle = Math.atan2(dy, dx);
@@ -267,7 +287,7 @@ class Bot {
         let closest = null;
         let minDist = Infinity;
         for (const pid in players) {
-            if (pid === this.id || pid === lastTaggerId) continue;
+            if (pid === this.id) continue;
             const p = players[pid];
             const dist = Math.hypot(p.x - this.x, p.y - this.y);
 

@@ -38,14 +38,14 @@ let slipVelocity = { x: 0, y: 0 };
 
 // 피드백 UI 로직
 const feedbackBtn = document.getElementById('feedback-btn');
-const feedbackModal = document.getElementById('feedback-modal');
-const feedbackInput = document.getElementById('feedback-input');
-const feedbackSend = document.getElementById('feedback-send');
-const feedbackCancel = document.getElementById('feedback-cancel');
 
 feedbackBtn.addEventListener('click', () => {
-    feedbackModal.style.display = 'flex';
-    feedbackInput.focus();
+    // 확인 후 외부 설문조사 링크로 연결 (모달 없이 즉시 이동)
+    const confirmMove = confirm("개발자에게 피드백을 보내시겠습니까?\n(구글 폼으로 연결됩니다)");
+    if (confirmMove) {
+        const link = "https://docs.google.com/forms/d/e/1FAIpQLSfaLbeeXPCPXnHd9_7P6xUsr__gunskb5Jhf6vpTfYlKbdLog/viewform?usp=header";
+        window.open(link, '_blank');
+    }
 });
 
 const guideBtn = document.getElementById('guide-btn');
@@ -65,25 +65,12 @@ window.addEventListener('click', (e) => {
     if (e.target == guideModal) {
         guideModal.style.display = 'none';
     }
-    if (e.target == feedbackModal) {
-        feedbackModal.style.display = 'none';
+    if (e.target == guideModal) {
+        guideModal.style.display = 'none';
     }
 });
 
-feedbackCancel.addEventListener('click', () => {
-    feedbackModal.style.display = 'none';
-    feedbackInput.value = '';
-});
 
-feedbackSend.addEventListener('click', () => {
-    const msg = feedbackInput.value.trim();
-    if (msg) {
-        socket.emit('sendFeedback', msg);
-        alert('소중한 의견 감사합니다! 🙇‍♂️');
-        feedbackModal.style.display = 'none';
-        feedbackInput.value = '';
-    }
-});
 
 // --- 로그인(입장) 로직 ---
 

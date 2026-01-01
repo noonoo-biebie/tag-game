@@ -4,7 +4,8 @@ const http = require('http');
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 const io = new Server(server);
-const fs = require('fs');
+// const fs = require('fs'); // 피드백 파일 저장 제거됨
+// const fs = require('fs'); // 피드백 파일 저장 제거됨
 
 // [모듈 임포트]
 const { ROWS, COLS, TILE_SIZE, ITEM_TYPES, MAPS } = require('./config');
@@ -274,7 +275,7 @@ function setupSocketEvents(socket) {
     socket.on('useItem', () => handleUseItem(socket));
     socket.on('disconnect', () => handleDisconnect(socket));
     socket.on('chatMessage', (msg) => handleChatMessage(socket, msg));
-    socket.on('sendFeedback', (msg) => handleFeedback(socket, msg));
+    // socket.on('sendFeedback', (msg) => handleFeedback(socket, msg)); // 외부 링크로 변경
     socket.on('announceAction', (action) => handleAnnounceAction(socket, action));
 }
 
@@ -286,16 +287,11 @@ function handleAnnounceAction(socket, action) {
     io.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
 }
 
-function handleFeedback(socket, msg) {
-    if (!players[socket.id]) return;
-    const nickname = players[socket.id].nickname;
-    const logEntry = `[${new Date().toISOString()}] ${nickname}: ${msg}\n`;
+// function handleFeedback(socket, msg) { ... } // 제거됨
 
-    fs.appendFile('feedback.txt', logEntry, (err) => {
-        if (err) console.error('Feedback save failed:', err);
-        else console.log('Feedback saved:', logEntry.trim());
-    });
-}
+// function handleFeedback(socket, msg) { ... } // 제거됨
+
+// function handleFeedback(socket, msg) { ... } // 제거됨
 
 function handleJoinGame(socket, data) {
     if (players[socket.id]) return;
@@ -469,26 +465,13 @@ function handleChatMessage(socket, msg) {
             '👋 <b>/kickbot</b> : 봇 추방<br>' +
             '🔄 <b>/reset</b> : 맵 초기화<br>' +
             '🗺️ <b>/map [이름]</b> : 맵 변경 (DEFAULT, MAZE, OPEN)<br>' +
-            '👁️ <b>/fog</b> : 시야 제한 해제 (치트)<br>' +
-            '📝 <b>/피드백확인</b> : 수집된 피드백 보기';
+            '👁️ <b>/fog</b> : 시야 제한 해제 (치트)';
 
         socket.emit('chatMessage', { nickname: 'System', message: helpMsg, playerId: 'system' });
         return;
     }
 
-    if (cmd === '/readfeedback' || cmd === '/피드백확인') {
-        fs.readFile('feedback.txt', 'utf8', (err, data) => {
-            if (err) {
-                socket.emit('chatMessage', { nickname: 'System', message: "아직 등록된 피드백이 없거나 파일을 읽을 수 없습니다.", playerId: 'system' });
-            } else {
-                let formatted = data.trim().replace(/\n/g, '<br>');
-                if (formatted === '') formatted = "피드백 내용이 비어있습니다.";
-
-                socket.emit('chatMessage', { nickname: 'System', message: '<br>📢 <b>수집된 피드백 목록</b><br>' + formatted, playerId: 'system' });
-            }
-        });
-        return;
-    }
+    // /readfeedback 제거됨
 
     io.emit('chatMessage', {
         nickname: player.nickname,
