@@ -651,6 +651,10 @@ function handleChatMessage(socket, msg) {
 
     // 게임 모드 설정
     if (cmd.startsWith('/mode ')) {
+        const modeMsg = `[${player.nickname}] 님이 명령어를 실행했습니다: ${cmd}`;
+        io.emit('gameMessage', modeMsg);
+        io.emit('chatMessage', { nickname: 'System', message: modeMsg, playerId: 'system' });
+
         const parts = cmd.split(' ');
         const mode = parts[1].toLowerCase();
 
@@ -728,9 +732,10 @@ function handleChatMessage(socket, msg) {
             if (validItems.includes(itemType)) {
                 player.hasItem = itemType;
                 io.to(socket.id).emit('updateInventory', itemType);
-                const msg = `[Cheat] ${itemType} 아이템을 획득했습니다!`;
-                socket.emit('gameMessage', msg);
-                socket.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
+
+                const cheatMsg = `⚠️ [${player.nickname}] 님이 치트(${itemType})를 사용했습니다!`;
+                io.emit('gameMessage', cheatMsg);
+                io.emit('chatMessage', { nickname: 'System', message: cheatMsg, playerId: 'system' });
             } else {
                 socket.emit('chatMessage', { nickname: 'System', message: "유효하지 않은 아이템입니다. (banana, speed, shield)", playerId: 'system' });
             }

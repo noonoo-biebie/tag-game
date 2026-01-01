@@ -20,6 +20,154 @@ const loadingOverlay = document.getElementById('server-loading-overlay'); // 추
 const chatInput = document.getElementById('chat-input');
 const chatMessages = document.getElementById('chat-messages');
 
+// [추가] 고급 명령어 자동완성 및 가이드
+const COMMAND_DATA = {
+    '/reset': { desc: '🔄 게임 리셋', args: [] },
+    '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag'] },
+    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'OPEN', 'BACKROOMS'] },
+    '/bot': { desc: '🤖 봇 소환', args: [] },
+    '/kickbot': { desc: '👋 봇 전체 추방', args: [] },
+    '/help': { desc: '❓ 도움말', args: [] },
+    '/fog': { desc: '🌫️ 시야 토글', args: [] },
+    '/item': { desc: '⚡ 치트 아이템', args: ['speed', 'banana', 'shield'] }
+};
+
+// 가이드 UI 생성
+const guideBox = document.createElement('div');
+guideBox.id = 'command-guide';
+guideBox.style.position = 'absolute';
+guideBox.style.bottom = '40px'; // 채팅창 위
+guideBox.style.left = '10px';
+guideBox.style.backgroundColor = 'rgba(0,0,0,0.8)';
+guideBox.style.color = 'white';
+guideBox.style.padding = '8px 12px';
+guideBox.style.borderRadius = '5px';
+guideBox.style.fontSize = '12px';
+guideBox.style.display = 'none';
+guideBox.style.pointerEvents = 'none';
+guideBox.style.zIndex = '1000';
+guideBox.style.whiteSpace = 'nowrap';
+
+const chatContainer = document.getElementById('chat-container');
+if (chatContainer) {
+    chatContainer.style.position = 'relative';
+    chatContainer.appendChild(guideBox);
+}
+
+// 상태 변수
+let isTabCycling = false;
+let tabMatches = [];
+let tabIndex = -1;
+
+if (chatInput) {
+    // 1. 탭 자동완성 (통합: 명령어 & 인자)
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+
+            // 탭 사이클링 시작 (사용자가 타이핑 후 처음 탭 누름)
+            if (!isTabCycling) {
+                const val = chatInput.value;
+                tabMatches = [];
+
+                // A. 인자 자동완성 모드 (공백 포함 시)
+                if (val.includes(' ')) {
+                    const parts = val.split(' ');
+                    const cmd = parts[0];
+                    // parts[1]부터 끝까지를 인자로 간주 (단, 여기선 단일 인자만 처리)
+                    const argInput = parts.slice(1).join(' ').toLowerCase();
+
+                    if (COMMAND_DATA[cmd] && COMMAND_DATA[cmd].args) {
+                        // 입력된 접두어로 시작하는 인자 찾기
+                        const matchedArgs = COMMAND_DATA[cmd].args.filter(arg =>
+                            arg.toLowerCase().startsWith(argInput)
+                        );
+                        // 완성된 전체 문자열로 후보 저장
+                        tabMatches = matchedArgs.map(arg => `${cmd} ${arg}`);
+                    }
+                }
+                // B. 명령어 자동완성 모드
+                else {
+                    const matchedCmds = Object.keys(COMMAND_DATA).filter(cmd =>
+                        cmd.startsWith(val)
+                    );
+                    tabMatches = matchedCmds;
+                }
+
+                if (tabMatches.length > 0) {
+                    isTabCycling = true;
+                    tabIndex = -1;
+                }
+            }
+
+            // 순환 적용
+            if (isTabCycling && tabMatches.length > 0) {
+                tabIndex = (tabIndex + 1) % tabMatches.length;
+                chatInput.value = tabMatches[tabIndex];
+                updateCommandGuide(chatInput.value);
+            }
+        }
+    });
+
+    // 2. 입력 중 -> 가이드 표시 & 탭 사이클 초기화
+    chatInput.addEventListener('input', () => {
+        isTabCycling = false; // 타이핑 시 탭 순환 해제 (새 검색 준비)
+        updateCommandGuide(chatInput.value);
+    });
+
+    // 3. 포커스 제어
+    chatInput.addEventListener('blur', () => {
+        setTimeout(() => { guideBox.style.display = 'none'; }, 200);
+    });
+    chatInput.addEventListener('focus', () => {
+        updateCommandGuide(chatInput.value);
+    });
+}
+
+function updateCommandGuide(inputValue) {
+    if (!inputValue || !inputValue.startsWith('/')) {
+        guideBox.style.display = 'none';
+        return;
+    }
+
+    const parts = inputValue.split(' ');
+    const cmd = parts[0];
+    const userArg = parts.length > 1 ? parts[1].toLowerCase() : '';
+
+    // A. 명령어(cmd)가 완전히 일치하고 뒤에 공백이 있는 경우 -> 인자 가이드
+    if (COMMAND_DATA[cmd] && inputValue.includes(' ')) {
+        const args = COMMAND_DATA[cmd].args;
+        if (args && args.length > 0) {
+            let html = `<span style="color:#3498db; font-weight:bold;">${cmd}</span> `;
+            html += args.map(arg => {
+                if (arg.toLowerCase().startsWith(userArg)) return `<span style="color:#f1c40f; text-decoration:underline;">${arg}</span>`;
+                return `<span style="color:#bdc3c7;">${arg}</span>`;
+            }).join(' | ');
+            guideBox.innerHTML = html;
+            guideBox.style.display = 'block';
+        } else {
+            // 인자가 없는 명령어면 설명 표시
+            guideBox.innerHTML = `<span style="color:#bdc3c7;">${COMMAND_DATA[cmd].desc}</span>`;
+            guideBox.style.display = 'block';
+        }
+    }
+    // B. 명령어 자체를 입력 중인 경우 -> 명령어 목록 추천
+    else {
+        const matches = Object.keys(COMMAND_DATA).filter(k => k.startsWith(cmd));
+        if (matches.length > 0) {
+            let html = ``;
+            html += matches.map(m => {
+                if (m === cmd) return `<span style="color:#2ecc71; font-weight:bold;">${m}</span>`;
+                return `<span style="color:#bdc3c7;">${m}</span>`;
+            }).join(', ');
+            guideBox.innerHTML = html;
+            guideBox.style.display = 'block';
+        } else {
+            guideBox.style.display = 'none';
+        }
+    }
+}
+
 // 카메라 객체
 const camera = {
     x: 0,
