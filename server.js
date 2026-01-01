@@ -142,10 +142,7 @@ function checkTrapCollision(playerId) {
 
             const dist = Math.sqrt((pCx - tCx) ** 2 + (pCy - tCy) ** 2);
 
-            // [디버그] 100 거리 이내면 무조건 로그 출력
-            if (dist < 100) {
-                console.log(`[BananaCheck] P(${Math.floor(pCx)},${Math.floor(pCy)}) T(${Math.floor(tCx)},${Math.floor(tCy)}) D:${dist.toFixed(1)} Owner:${trap.ownerId === playerId ? 'Me' : 'Other'}`);
-            }
+
 
             // 설치자 보호
             if (trap.ownerId === playerId) {
@@ -350,6 +347,9 @@ function resetGame() {
         // 좀비 상태 초기화
         p.isZombie = false;
         if (p.originalColor) p.color = p.originalColor; // 원래 색 복구
+
+        // [추가] 클라이언트 인벤토리 초기화 이벤트 전송
+        io.to(id).emit('updateInventory', null);
     }
 
     // 모드별 초기화
