@@ -93,7 +93,10 @@ for (let r = 0; r < Z_ROWS; r++) {
             if (c % 10 >= 2 && c % 10 <= 6 && r % 8 >= 2 && r % 8 <= 6) {
                 if (r % 8 === 6 && c % 10 === 4) row.push(0);
                 else if (r % 8 > 2 && r % 8 < 6 && c % 10 > 2 && c % 10 < 6) row.push(0);
-                else row.push(1);
+                else {
+                    // Log potential issue if needed or just leave as is
+                    row.push(1);
+                }
             } else {
                 row.push(0);
             }

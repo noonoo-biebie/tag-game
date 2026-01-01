@@ -35,6 +35,7 @@ let players = {};
 let items = {};
 let myItem = null;
 let taggerId = null;
+let gameMode = 'TAG'; // [추가]
 
 // 속도 관련 변수
 const BASE_SPEED = 240;
@@ -157,7 +158,19 @@ socket.on('updateTagger', (id) => {
 });
 
 socket.on('playerMoved', (playerInfo) => {
-    if (playerInfo.playerId === socket.id) return;
+    // [수정] 본인이어도 중요 상태(좀비, 색상 등)는 동기화
+    if (playerInfo.playerId === socket.id) {
+        if (players[socket.id]) {
+            players[socket.id].color = playerInfo.color;
+            players[socket.id].nickname = playerInfo.nickname;
+            players[socket.id].isZombie = playerInfo.isZombie;
+
+            // 시각 효과
+            players[socket.id].isSpeeding = playerInfo.isSpeeding;
+            players[socket.id].hasShield = playerInfo.hasShield;
+        }
+        return; // 위치 업데이트는 클라이언트 예측 이동 우선
+    }
 
     if (!players[playerInfo.playerId]) {
         players[playerInfo.playerId] = playerInfo;
@@ -171,6 +184,7 @@ socket.on('playerMoved', (playerInfo) => {
         // 시각 효과 동기화 추가
         players[playerInfo.playerId].hasShield = playerInfo.hasShield;
         players[playerInfo.playerId].isSpeeding = playerInfo.isSpeeding;
+        players[playerInfo.playerId].isZombie = playerInfo.isZombie; // [추가] 좀비 상태 동기화
     }
 });
 
@@ -191,6 +205,11 @@ socket.on('updateItems', (serverItems) => {
 
 socket.on('updateTraps', (serverTraps) => {
     traps = serverTraps;
+});
+
+socket.on('gameMode', (mode) => {
+    gameMode = mode;
+    console.log(`[GameMode] 수신: ${mode}`);
 });
 
 socket.on('mapUpdate', (newMapData) => {
@@ -253,7 +272,8 @@ socket.on('playerSlipped', (data) => {
     else {
         if (keys['arrowup'] || keys['w']) dy = -1;
         else if (keys['arrowdown'] || keys['s']) dy = 1;
-        else if (keys['arrowleft'] || keys['a']) dx = -1;
+
+        if (keys['arrowleft'] || keys['a']) dx = -1;
         else if (keys['arrowright'] || keys['d']) dx = 1;
     }
 
@@ -404,6 +424,7 @@ function draw() {
     ctx.restore(); // 문맥 복구
 
     drawInventory(); // UI (카메라 영향 X)
+    drawHUD();       // [추가] 상태창
 }
 
 function drawMap() {
@@ -485,7 +506,14 @@ function drawPlayers() {
             ctx.fillText('술래', p.x + 4, p.y - 6);
         }
 
-        ctx.fillStyle = (id === taggerId) ? '#e74c3c' : '#fff';
+        if (id === taggerId) {
+            ctx.fillStyle = '#e74c3c'; // 술래: 빨강
+        } else if (p.isZombie) {
+            ctx.fillStyle = '#2ecc71'; // 좀비: 초록
+        } else {
+            ctx.fillStyle = '#fff'; // 생존자: 하양
+        }
+
         ctx.font = (id === taggerId) ? 'bold 14px "Noto Sans KR", sans-serif' : '12px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'center';
         const nicknameY = (id === taggerId) ? p.y - 22 : p.y - 6;
@@ -748,6 +776,41 @@ function update(timestamp) {
     requestAnimationFrame(update);
 }
 
+// Assuming the 'draw' function is defined elsewhere and ends like this:
+// function draw() {
+//     // ... other drawing logic ...
+//     // 아이템 슬롯 (UI는 카메라 영향을 받지 않음 -> restore 후 그림)
+//     drawInventory();
+//     drawHUD(); // Added this line
+//     requestAnimationFrame(draw); // This line would typically be in update, but following the snippet's implied structure
+// }
+
+// The instruction implies adding drawHUD() at the end of the draw() function.
+// Since the draw() function itself is not fully provided, I'll place the change
+// based on the context given in the instruction's "Code Edit" snippet.
+// If 'draw' is indeed structured to call requestAnimationFrame(draw) internally,
+// and drawInventory() is the last drawing call before that, then drawHUD() should go here.
+// However, the current 'update' function already calls requestAnimationFrame(update).
+// This suggests 'draw' is a rendering function, not a loop function.
+// Given the instruction, I will assume the user wants to add drawHUD() after drawInventory()
+// within the draw() function, and that the provided snippet represents the end of that function.
+// Since the full 'draw' function is not in the provided document, I cannot directly modify it.
+// I will add a placeholder comment indicating where it would go if the function were present.
+
+// If the 'draw' function were defined in this document, and looked like this:
+/*
+function draw() {
+    // ... existing drawing code ...
+
+    // 아이템 슬롯 (UI는 카메라 영향을 받지 않음 -> restore 후 그림)
+    drawInventory();
+    drawHUD(); // This line would be added here.
+
+    // If draw() itself was meant to loop, this would be here, but it's in update()
+    // requestAnimationFrame(draw);
+}
+*/
+
 // 그림자(시야 제한) 효과 - Even-Odd Rule 적용
 function drawShadows() {
     if (!isJoined || !players[socket.id]) return;
@@ -922,6 +985,7 @@ function updateStatus(isConnected) {
 }
 
 // 채팅 단축키 (/)
+// 채팅 단축키 (/)
 window.addEventListener('keydown', (e) => {
     // 채팅창이 아닌 곳에서 / 키를 누르면 채팅창으로 포커스
     if (e.key === '/' && document.activeElement !== chatInput) {
@@ -929,3 +993,44 @@ window.addEventListener('keydown', (e) => {
         chatInput.focus();
     }
 });
+
+// [추가] HUD 렌더링
+function drawHUD() {
+    if (!isJoined) return;
+    if (gameMode !== 'ZOMBIE') return; // [수정] 좀비 모드 전용
+
+
+    // 생존자 수 계산
+    let survivors = 0;
+    let zombies = 0;
+    Object.values(players).forEach(p => {
+        if (p.isZombie) zombies++;
+        else survivors++;
+    });
+
+    const padding = 10;
+    const boxWidth = 140;
+    const boxHeight = 70;
+    const x = canvas.width - boxWidth - padding;
+    const y = padding;
+
+    // 반투명 배경
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.fillRect(x, y, boxWidth, boxHeight);
+    ctx.strokeRect(x, y, boxWidth, boxHeight);
+
+    // 텍스트
+    ctx.font = 'bold 16px "Noto Sans KR", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const textX = x + 15;
+    const textY = y + 15;
+
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`👥 인간: ${survivors}`, textX, textY);
+
+    ctx.fillStyle = '#2ecc71';
+    ctx.fillText(`🧟 좀비: ${zombies}`, textX, textY + 30);
+}

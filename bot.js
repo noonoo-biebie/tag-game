@@ -77,7 +77,7 @@ class Bot {
     }
 
     // 메인 업데이트 루프
-    update(players, taggerId, lastTaggerId, callbacks, mapData) {
+    update(players, taggerId, lastTaggerId, callbacks, mapData, gameMode = 'TAG') {
         // [0] 기절 상태 체크
         if (this.stunnedUntil && Date.now() < this.stunnedUntil) return;
 
@@ -119,16 +119,18 @@ class Bot {
         }
 
         // 3. AI 로직
-        if (taggerId === this.id) {
-            // [술래]
-            const visibleTarget = this.findBestTarget(players, lastTaggerId, mapData);
+        let isChaser = false;
+        if (gameMode === 'ZOMBIE') {
+            isChaser = this.isZombie;
+        } else {
+            isChaser = (taggerId === this.id);
+        }
 
+        if (isChaser) {
+            const visibleTarget = this.findBestTarget(players, lastTaggerId, mapData, gameMode);
             if (visibleTarget) {
-                // [추격] 타겟 보임
                 this.patrolTarget = null;
                 this.chaseMemory = { x: visibleTarget.x, y: visibleTarget.y };
-
-                // 끼임 시 Random Wiggle
                 if (this.isStuck) {
                     if (!this.wiggleTimer || Date.now() - this.wiggleTimer > 300) {
                         const angle = Math.random() * Math.PI * 2;
@@ -143,50 +145,42 @@ class Bot {
                     this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
                     this.moveToDir(mapData);
                 }
-
-            } else if (this.chaseMemory) {
-                // [수색] 안 보임 -> 마지막 위치로 이동
-                const dist = Math.hypot(this.chaseMemory.x - this.x, this.chaseMemory.y - this.y);
-                if (dist < 40) {
-                    this.chaseMemory = null;
-                } else {
-                    const dx = this.chaseMemory.x - this.x;
-                    const dy = this.chaseMemory.y - this.y;
-                    const angle = Math.atan2(dy, dx);
-                    this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-                    this.moveToDir(mapData);
-                }
             } else {
-                // [순찰]
                 this.doPatrol(mapData);
             }
-
         } else {
-            // [도망자]
-            if (taggerId && players[taggerId]) {
-                const tagger = players[taggerId];
-                const dist = Math.hypot(tagger.x - this.x, tagger.y - this.y);
-
-                // 시야 체크 (효율화를 위해 350 거리 밖에서는 체크 안함)
-                let canSeeTagger = false;
-                if (dist < 350) {
-                    if (checkLineOfSight(this.x + 16, this.y + 16, tagger.x + 16, tagger.y + 16, mapData)) {
-                        canSeeTagger = true;
+            let threat = null;
+            let distToThreat = Infinity;
+            if (gameMode === 'ZOMBIE') {
+                for (const pid in players) {
+                    if (pid === this.id) continue;
+                    if (players[pid].isZombie) {
+                        const d = Math.hypot(players[pid].x - this.x, players[pid].y - this.y);
+                        if (d < distToThreat) {
+                            distToThreat = d;
+                            threat = players[pid];
+                        }
                     }
                 }
-
-                // 히스테리시스 상태 업데이트
-                if (this.isFleeing) {
-                    // 도망 중이면: 거리가 350 이상 멀어지거나, 시야에서 사라져도 (일단 거리가 멀어질 때까지 도망)
-                    if (dist > 350) this.isFleeing = false;
-                } else {
-                    // 평시: 거리가 250 이내이고 보이면 도망 시작
-                    if (dist < 250 && canSeeTagger) this.isFleeing = true;
+            } else {
+                if (taggerId && players[taggerId]) {
+                    threat = players[taggerId];
+                    distToThreat = Math.hypot(threat.x - this.x, threat.y - this.y);
                 }
-
+            }
+            if (threat) {
+                let canSeeThreat = false;
+                if (distToThreat < 350) {
+                    if (checkLineOfSight(this.x + 16, this.y + 16, threat.x + 16, threat.y + 16, mapData)) canSeeThreat = true;
+                }
                 if (this.isFleeing) {
-                    const dx = this.x - tagger.x;
-                    const dy = this.y - tagger.y;
+                    if (distToThreat > 350) this.isFleeing = false;
+                } else {
+                    if (distToThreat < 250 && canSeeThreat) this.isFleeing = true;
+                }
+                if (this.isFleeing) {
+                    const dx = this.x - threat.x;
+                    const dy = this.y - threat.y;
                     const angle = Math.atan2(dy, dx);
                     this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
                     this.moveToDir(mapData);
@@ -197,6 +191,7 @@ class Bot {
                 this.doPatrol(mapData);
             }
         }
+
 
         this.useItemLogic(callbacks.handleItemEffect);
     }
@@ -283,12 +278,23 @@ class Bot {
         }
     }
 
-    findBestTarget(players, lastTaggerId, mapData) {
+    findBestTarget(players, lastTaggerId, mapData, gameMode = 'TAG') {
         let closest = null;
         let minDist = Infinity;
         for (const pid in players) {
             if (pid === this.id) continue;
             const p = players[pid];
+
+            // 타겟 필터링
+            if (gameMode === 'ZOMBIE') {
+                // 좀비는 생존자(비좀비)만 추격
+                if (p.isZombie) continue;
+            } else {
+                // 기본 술래잡기: 최근 술래 제외, 기절한 사람 제외
+                if (pid === lastTaggerId) continue;
+                if (p.stunnedUntil && Date.now() < p.stunnedUntil) continue;
+            }
+
             const dist = Math.hypot(p.x - this.x, p.y - this.y);
 
             // 시야 체크

@@ -24,6 +24,7 @@ let taggerId = null;
 let lastTaggerId = null; // 최근 술래 (봇 반격 방지용)
 let currentMapName = 'DEFAULT';
 let currentMapData = MAPS.DEFAULT;
+let gameMode = 'TAG'; // [복구] 게임 모드 변수 선언 (TAG/ZOMBIE)
 
 // --- 아이템 시스템 ---
 let items = {};
@@ -65,6 +66,7 @@ function handleItemEffect(playerId, itemType) {
     } else if (itemType === 'banana') {
         const trapId = Date.now() + Math.random();
         traps[trapId] = { x: player.x, y: player.y, ownerId: playerId, createdAt: Date.now() };
+        console.log(`[Banana] Created by ${player.nickname}, TrapID: ${trapId}, Total: ${Object.keys(traps).length}`);
         io.emit('updateTraps', traps);
         io.emit('gameMessage', `[${player.nickname}] 님이 바나나를 설치했습니다! 🍌`);
     } else if (itemType === 'shield') {
@@ -111,121 +113,188 @@ function checkItemCollection(playerId) {
 let traps = {};
 
 function checkTrapCollision(playerId) {
-    const player = players[playerId];
-    if (!player) return;
+    try {
+        const player = players[playerId];
+        if (!player) return;
 
-    // 미끄러짐 상태 관리 (서버측 타이머)
-    if (player.isSlipped) {
-        if (Date.now() - player.slipStartTime > 3000) { // 3초 후 해제
-            player.isSlipped = false;
-        } else {
-            return; // 아직 미끄러지는 중이면 트랩 체크 안 함
-        }
-    }
+        // 트랩 없으면 리턴
+        if (Object.keys(traps).length === 0) return;
 
-    for (const trapId in traps) {
-        const trap = traps[trapId];
-
-        // [추가] 설치자 3초 보호 로직
-        if (trap.ownerId === playerId) {
-            const timeDiff = Date.now() - trap.createdAt;
-            if (timeDiff < 3000) {
-                // console.log(`[Banana] 본인 보호 중 (${3000 - timeDiff}ms 남음)`);
-                continue; // 3초 동안은 본인 바나나 안 밟음
+        // 미끄러짐 해제 체크
+        if (player.isSlipped) {
+            if (Date.now() - player.slipStartTime > 3000) {
+                player.isSlipped = false;
+                // console.log(`[Banana] ${player.nickname} recovered.`);
             } else {
-                // console.log(`[Banana] 본인 보호 종료`);
+                return; // 미끄러짐 중엔 체크 안함
             }
         }
 
-        // 중심 좌표로 충돌 체크 (더 정확하게)
-        const pCx = player.x + 16;
-        const pCy = player.y + 16;
-        const tCx = trap.x + 16;
-        const tCy = trap.y + 16;
+        // 거리 체크
+        for (const trapId in traps) {
+            const trap = traps[trapId];
+            if (!trap) continue;
 
-        const dx = pCx - tCx;
-        const dy = pCy - tCy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+            const pCx = player.x + 16;
+            const pCy = player.y + 16;
+            const tCx = trap.x + 16;
+            const tCy = trap.y + 16;
 
-        if (dist < 24) { // 판정 범위 약간 확대 (20 -> 24)
-            // 설치자 보호 시간이 지났으면 본인도 밟음
-            player.isSlipped = true;
-            player.slipStartTime = Date.now();
+            const dist = Math.sqrt((pCx - tCx) ** 2 + (pCy - tCy) ** 2);
 
-            // 미끄러지는 방향 (현재 이동 방향 or 랜덤)
-            let slipDir = { x: 0, y: 0 };
+            // [디버그] 100 거리 이내면 무조건 로그 출력
+            if (dist < 100) {
+                console.log(`[BananaCheck] P(${Math.floor(pCx)},${Math.floor(pCy)}) T(${Math.floor(tCx)},${Math.floor(tCy)}) D:${dist.toFixed(1)} Owner:${trap.ownerId === playerId ? 'Me' : 'Other'}`);
+            }
 
-            // 봇일 경우
-            if (player instanceof Bot) {
-                slipDir = { ...player.moveDir };
-                if (slipDir.x === 0 && slipDir.y === 0) {
-                    slipDir.x = Math.random() < 0.5 ? 1 : -1;
+            // 설치자 보호
+            if (trap.ownerId === playerId) {
+                if (Date.now() - trap.createdAt < 3000) continue;
+            }
+
+            if (dist < 30) {
+                player.isSlipped = true;
+                player.slipStartTime = Date.now();
+
+                let slipDir = { x: 0, y: 0 };
+                if (player instanceof Bot) {
+                    slipDir = { ...player.moveDir };
+                    if (slipDir.x === 0 && slipDir.y === 0) slipDir.x = Math.random() < 0.5 ? 1 : -1;
+                    player.slipDir = slipDir;
+                } else {
+                    io.to(playerId).emit('playerSlipped', { duration: 3000 });
                 }
-                player.slipDir = slipDir;
-            } else {
-                // 플레이어: 클라이언트에 알림 (3초)
-                io.to(playerId).emit('playerSlipped', { duration: 3000 });
-            }
 
-            delete traps[trapId];
-            io.emit('updateTraps', traps);
-            io.emit('gameMessage', `[${player.nickname}] 님이 바나나를 밟았습니다! 으악!`);
+                delete traps[trapId];
+                io.emit('updateTraps', traps);
+                io.emit('gameMessage', `[${player.nickname}] 님이 바나나를 밟았습니다! 으악!`);
+                return;
+            }
         }
+    } catch (e) {
+        console.error("TrapError:", e);
     }
 }
 
 // 충돌(태그) 판정
 function checkCollision(moverId) {
     const mover = players[moverId];
-    if (!mover || !taggerId) return;
+    if (!mover) return;
 
-    // 내가 술래일 때만 다른 사람 잡기 체크
-    if (moverId === taggerId) {
-        // 0. 기절 중이면 태그 불가 (이동 로직에서 막히지만 이중 체크)
-        if (mover.stunnedUntil && Date.now() < mover.stunnedUntil) return;
+    // 모드별 로직 분기
+    if (gameMode === 'TAG') {
+        if (!taggerId) return;
+        // 내가 술래일 때만 다른 사람 잡기 체크
+        if (moverId === taggerId) {
+            // (기존 술래잡기 로직)
+            if (mover.stunnedUntil && Date.now() < mover.stunnedUntil) return;
 
+            for (const targetId in players) {
+                if (targetId === moverId) continue;
+                const target = players[targetId];
+                if (targetId === lastTaggerId) {
+                    // 방금 술래였던 사람은 잠깐 안전? (여기선 생략, lastTagger logic is mainly for bots)
+                }
+
+                const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
+                if (dist < 30) {
+                    if (target.hasShield) {
+                        // 방어
+                        target.hasShield = false;
+                        io.to(targetId).emit('itemEffect', { type: 'shield', on: false });
+                        io.emit('gameMessage', `[${target.nickname}] 님이 방어막으로 공격을 막았습니다!`);
+                        // 술래 잠깐 기절 (패널티)
+                        players[taggerId].stunnedUntil = Date.now() + 1000;
+                        // 넉백 (옵션)
+                        return;
+                    }
+
+                    // 태그 성공
+                    lastTaggerId = taggerId;
+                    taggerId = targetId;
+                    // 새 술래 기절 처리 (2초)
+                    if (players[taggerId]) {
+                        players[taggerId].stunnedUntil = Date.now() + 2000;
+                    }
+
+                    io.emit('updateTagger', taggerId);
+                    io.emit('gameMessage', `[${target.nickname}] 님이 술래가 되었습니다!`);
+                    io.emit('tagOccurred', { newTaggerId: taggerId });
+                    console.log(`태그 발생: ${mover.nickname} -> ${target.nickname}`);
+                    break;
+                }
+            }
+        }
+    } else if (gameMode === 'ZOMBIE') {
+        const zombieColors = ['#2ecc71', '#27ae60', '#00b894', '#55efc4', '#16a085'];
+
+        // 좀비 모드 충돌 판정 (쌍방향 체크)
         for (const targetId in players) {
             if (targetId === moverId) continue;
             const target = players[targetId];
 
-            // 1500ms 무적(재잡기 방지) 로직은 game.js client effect 위주였으나 서버도 체크 필요하다면 lastTaggerId 활용
-            if (targetId === lastTaggerId) {
-                // 방금 술래였던 사람은 잠깐 안전? (여기선 생략, lastTagger logic is mainly for bots)
-            }
-
-            // 거리 체크 (30px)
             const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
             if (dist < 30) {
-                // 잡았다!
-                if (target.hasShield) {
-                    // 방어
-                    target.hasShield = false;
-                    io.to(targetId).emit('itemEffect', { type: 'shield', on: false });
-                    io.emit('gameMessage', `[${target.nickname}] 님이 방어막으로 공격을 막았습니다!`);
+                let zombie = null;
+                let human = null;
 
-                    // 술래 잠깐 기절 (패널티)
-                    players[taggerId].stunnedUntil = Date.now() + 1000;
-
-                    // 넉백 (옵션)
-                    return;
+                if (mover.isZombie && !target.isZombie) {
+                    zombie = mover;
+                    human = target;
+                } else if (!mover.isZombie && target.isZombie) {
+                    zombie = target;
+                    human = mover;
                 }
 
-                // 태그 성공
-                lastTaggerId = taggerId;
-                taggerId = targetId;
+                if (zombie && human) {
+                    // 1. 쉴드 체크
+                    if (human.hasShield) {
+                        human.hasShield = false;
+                        const humanId = (human === mover) ? moverId : targetId;
+                        io.to(humanId).emit('itemEffect', { type: 'shield', on: false });
+                        io.emit('gameMessage', `🛡️ [${human.nickname}] 님이 방어막으로 좀비를 막았습니다!`);
+                        zombie.stunnedUntil = Date.now() + 1000;
+                        return;
+                    }
 
-                // 새 술래 기절 처리 (2초)
-                if (players[taggerId]) {
-                    players[taggerId].stunnedUntil = Date.now() + 2000;
+                    // 2. 감염 발생
+                    const humanId = (human === mover) ? moverId : targetId;
+
+                    human.isZombie = true;
+                    if (!human.originalColor) human.originalColor = human.color;
+                    human.color = zombieColors[Math.floor(Math.random() * zombieColors.length)];
+
+                    // 봇 아이콘 변경 (🤖 -> 🧟)
+                    if (human.nickname.includes('🤖')) {
+                        human.nickname = human.nickname.replace('🤖', '🧟');
+                    } else if (!human.nickname.includes('🧟')) {
+                        // 플레이어도 원하면 아이콘 추가? (일단 봇만 요청사항)
+                    }
+
+                    io.emit('playerMoved', human);
+                    io.emit('gameMessage', `🧟 [${human.nickname}] 님이 좀비에게 감염되었습니다!`);
+                    io.emit('zombieInfect', { targetId: humanId });
+
+                    checkZombieWin();
+                    break;
                 }
-
-                io.emit('updateTagger', taggerId);
-                io.emit('gameMessage', `[${target.nickname}] 님이 술래가 되었습니다!`);
-                io.emit('tagOccurred', { newTaggerId: taggerId });
-                console.log(`태그 발생: ${mover.nickname} -> ${target.nickname}`);
-                break;
             }
         }
+    }
+}
+
+function checkZombieWin() {
+    // 생존자 수 체크
+    const ids = Object.keys(players);
+    const survivors = ids.filter(id => !players[id].isZombie);
+
+    if (survivors.length === 0 && ids.length > 0) { // 모든 플레이어가 좀비가 되었을 때
+        io.emit('gameMessage', `🧟 인류가 멸망했습니다... 좀비 승리! 🧟`);
+        // 게임 오버 처리? 리셋?
+        // 일단 메시지만.
+    } else if (survivors.length > 0 && ids.length > 0) {
+        // 생존자 수 알림 (매번 하면 시끄러우니 생략하거나 변경 시에만)
+        // io.emit('gameMessage', `생존자 ${survivors.length}명 남았습니다.`);
     }
 }
 
@@ -277,10 +346,30 @@ function resetGame() {
         p.hasItem = null;
         p.hasShield = false;
         p.isSpeeding = false;
-    }
-    io.emit('currentPlayers', players);
 
-    const msg = "🔄 맵이 초기화되었습니다!";
+        // 좀비 상태 초기화
+        p.isZombie = false;
+        if (p.originalColor) p.color = p.originalColor; // 원래 색 복구
+    }
+
+    // 모드별 초기화
+    if (gameMode === 'TAG') {
+        // 생존자 중 한 명 술래? (보통 createBot이나 join에서 함)
+        // 리셋 시 술래 재선정
+        const ids = Object.keys(players);
+        if (ids.length > 0) {
+            taggerId = ids[Math.floor(Math.random() * ids.length)];
+            io.emit('updateTagger', taggerId);
+        }
+    } else if (gameMode === 'ZOMBIE') {
+        taggerId = null; // 좀비 모드는 술래 개념 대신 좀비가 있음
+        io.emit('updateTagger', null);
+    }
+
+    io.emit('currentPlayers', players);
+    io.emit('gameMode', gameMode); // [추가] 클라이언트에 게임 모드 전송
+
+    const msg = `🔄 게임 리셋! 모드: ${gameMode}`;
     io.emit('gameMessage', msg);
     io.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
 }
@@ -338,6 +427,7 @@ function handleJoinGame(socket, data) {
 
     socket.emit('joinSuccess', players[socket.id]);
     socket.emit('mapUpdate', currentMapData); // 맵 데이터 전송
+    socket.emit('gameMode', gameMode); // [추가]
     socket.emit('currentPlayers', players);
     socket.emit('updateItems', items);
     socket.emit('updateTraps', traps);
@@ -357,13 +447,45 @@ function handlePlayerMove(socket, movementData) {
         io.emit('playerMoved', players[socket.id]);
         checkCollision(socket.id);
         checkItemCollection(socket.id);
+
+
         checkTrapCollision(socket.id);
     }
 }
 
+// [추가] 아이템 획득 체크
+function checkItemCollection(playerId) {
+    const player = players[playerId];
+    if (!player) return;
+    if (player.isZombie) return; // 좀비는 아이템 획득 불가
+
+    if (player.hasItem) return; // 이미 아이템 보유 중
+
+    for (const itemId in items) {
+        const item = items[itemId];
+        const dist = Math.hypot(player.x - item.x, player.y - item.y);
+
+        // 아이템 획득 반경 (30px)
+        if (dist < 30) {
+            player.hasItem = item.type;
+            delete items[itemId];
+
+            io.emit('updateItems', items);
+            io.to(playerId).emit('updateInventory', item.type);
+            io.emit('gameMessage', `[${player.nickname}] 님이 ${item.type} 획득!`);
+            break;
+        }
+    }
+}
+
+
+
 function handleUseItem(socket) {
     const player = players[socket.id];
-    if (player && player.hasItem) {
+    if (!player) return;
+    if (player.isZombie) return; // [추가] 좀비는 아이템 사용 불가
+
+    if (player.hasItem) {
         const itemType = player.hasItem;
         player.hasItem = null;
         io.to(socket.id).emit('updateInventory', null);
@@ -459,6 +581,76 @@ function handleChatMessage(socket, msg) {
         return;
     }
 
+    // 게임 모드 설정
+    if (cmd.startsWith('/mode ')) {
+        const parts = cmd.split(' ');
+        const mode = parts[1].toLowerCase();
+
+        if (mode === 'zombie') {
+            gameMode = 'ZOMBIE';
+            // [수정] 맵 변경 제거 (현재 맵 유지)
+
+            if (parts[2]) {
+                const botCount = parseInt(parts[2]);
+                Object.keys(players).forEach(id => {
+                    if (players[id] instanceof Bot) delete players[id];
+                });
+                for (let i = 0; i < botCount; i++) {
+                    const botId = 'bot_' + Date.now() + '_' + i;
+                    const bot = new Bot(botId, currentMapData);
+                    players[bot.id] = bot;
+                }
+            }
+
+            resetGame();
+
+            // [수정] 10초 실시간 카운트다운
+            let timeLeft = 10;
+            const countdownMsg = (sec) => `⏳ ${sec}초 뒤에 좀비 바이러스가 퍼집니다!`;
+
+            io.emit('gameMessage', countdownMsg(timeLeft));
+            io.emit('chatMessage', { nickname: 'System', message: countdownMsg(timeLeft), playerId: 'system' });
+
+            const countdownInterval = setInterval(() => {
+                if (gameMode !== 'ZOMBIE') {
+                    clearInterval(countdownInterval);
+                    return;
+                }
+
+                timeLeft--;
+                if (timeLeft > 0) {
+                    io.emit('gameMessage', countdownMsg(timeLeft));
+                } else {
+                    clearInterval(countdownInterval);
+
+                    // 감염 시작
+                    const ids = Object.keys(players);
+                    if (ids.length > 0) {
+                        const hostId = ids[Math.floor(Math.random() * ids.length)];
+                        const host = players[hostId];
+
+                        if (host && !host.isZombie) {
+                            host.isZombie = true;
+                            host.originalColor = host.color; // 원래 색상 저장
+                            host.color = '#2ecc71'; // [복구] 좀비 색상 강제 변경
+
+                            io.emit('playerMoved', host);
+                            io.emit('gameMessage', `🧟 [${host.nickname}] 님이 최초의 좀비(숙주)가 되었습니다!!`);
+                            io.emit('zombieInfect', { targetId: hostId });
+                        }
+                    }
+                }
+            }, 1000);
+
+        } else if (mode === 'tag') {
+            gameMode = 'TAG';
+            resetGame();
+        } else {
+            socket.emit('chatMessage', { nickname: 'System', message: "사용법: /mode [zombie/tag] [봇수]", playerId: 'system' });
+        }
+        return;
+    }
+
     // 맵 변경 커맨드
     if (cmd.startsWith('/map')) {
         const mapName = cmd.split(' ')[1];
@@ -483,6 +675,7 @@ function handleChatMessage(socket, msg) {
 
     if (cmd === '/help' || cmd === '/명령어' || cmd === '/?') {
         const helpMsg = '<br>📜 <b>명령어 목록</b><br>' +
+            '🧟 <b>/mode zombie [숫자]</b> : 좀비모드+봇생성<br>' +
             '🤖 <b>/bot</b> : 봇 소환<br>' +
             '👋 <b>/kickbot</b> : 봇 추방<br>' +
             '🔄 <b>/reset</b> : 맵 초기화<br>' +
@@ -548,9 +741,10 @@ setInterval(() => {
     Object.keys(players).forEach(id => {
         if (players[id] instanceof Bot) {
             // [중요] 봇에게 게임 state와 callback 전달
+            // gameMode 추가 전달
             players[id].update(players, taggerId, lastTaggerId, {
                 handleItemEffect: handleItemEffect
-            }, currentMapData);
+            }, currentMapData, gameMode);
 
             // 동기화
             io.emit('playerMoved', players[id]);
