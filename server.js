@@ -64,7 +64,7 @@ function handleItemEffect(playerId, itemType) {
         }, 5000);
     } else if (itemType === 'banana') {
         const trapId = Date.now() + Math.random();
-        traps[trapId] = { x: player.x, y: player.y, ownerId: playerId };
+        traps[trapId] = { x: player.x, y: player.y, ownerId: playerId, createdAt: Date.now() };
         io.emit('updateTraps', traps);
         io.emit('gameMessage', `[${player.nickname}] 님이 바나나를 설치했습니다! 🍌`);
     } else if (itemType === 'shield') {
@@ -114,19 +114,41 @@ function checkTrapCollision(playerId) {
     const player = players[playerId];
     if (!player) return;
 
-    // 공중부양/무적 상태면 무시하고 싶지만 일단 구현 편의상 체크
-    if (player.isSlipped) return; // 이미 미끄러지는 중이면 패스
+    // 미끄러짐 상태 관리 (서버측 타이머)
+    if (player.isSlipped) {
+        if (Date.now() - player.slipStartTime > 3000) { // 3초 후 해제
+            player.isSlipped = false;
+        } else {
+            return; // 아직 미끄러지는 중이면 트랩 체크 안 함
+        }
+    }
 
     for (const trapId in traps) {
         const trap = traps[trapId];
-        // 설치 직후 본인 면역 로직 (옵션) - 일단 생략
 
-        const dx = player.x - trap.x;
-        const dy = player.y - trap.y;
+        // [추가] 설치자 3초 보호 로직
+        if (trap.ownerId === playerId) {
+            const timeDiff = Date.now() - trap.createdAt;
+            if (timeDiff < 3000) {
+                // console.log(`[Banana] 본인 보호 중 (${3000 - timeDiff}ms 남음)`);
+                continue; // 3초 동안은 본인 바나나 안 밟음
+            } else {
+                // console.log(`[Banana] 본인 보호 종료`);
+            }
+        }
+
+        // 중심 좌표로 충돌 체크 (더 정확하게)
+        const pCx = player.x + 16;
+        const pCy = player.y + 16;
+        const tCx = trap.x + 16;
+        const tCy = trap.y + 16;
+
+        const dx = pCx - tCx;
+        const dy = pCy - tCy;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        if (dist < 20) {
-            // 설치자 본인이 밟았다? -> 걸리게 함 (재미)
+        if (dist < 24) { // 판정 범위 약간 확대 (20 -> 24)
+            // 설치자 보호 시간이 지났으면 본인도 밟음
             player.isSlipped = true;
             player.slipStartTime = Date.now();
 
@@ -141,8 +163,8 @@ function checkTrapCollision(playerId) {
                 }
                 player.slipDir = slipDir;
             } else {
-                // 플레이어: 클라이언트에 알림
-                io.to(playerId).emit('playerSlipped', { duration: 10000 });
+                // 플레이어: 클라이언트에 알림 (3초)
+                io.to(playerId).emit('playerSlipped', { duration: 3000 });
             }
 
             delete traps[trapId];
@@ -464,10 +486,30 @@ function handleChatMessage(socket, msg) {
             '🤖 <b>/bot</b> : 봇 소환<br>' +
             '👋 <b>/kickbot</b> : 봇 추방<br>' +
             '🔄 <b>/reset</b> : 맵 초기화<br>' +
-            '🗺️ <b>/map [이름]</b> : 맵 변경 (DEFAULT, MAZE, OPEN)<br>' +
+            '🎁 <b>/item [이름]</b> : 아이템 획득 (banana, speed, shield)<br>' +
+            '🗺️ <b>/map [이름]</b> : 맵 변경<br>' +
             '👁️ <b>/fog</b> : 시야 제한 해제 (치트)';
 
         socket.emit('chatMessage', { nickname: 'System', message: helpMsg, playerId: 'system' });
+        return;
+    }
+
+    // [추가] 아이템 치트
+    if (cmd.startsWith('/item ')) {
+        const parts = cmd.split(' ');
+        if (parts.length > 1) {
+            const itemType = parts[1].toLowerCase();
+            const validItems = ['banana', 'speed', 'shield'];
+            if (validItems.includes(itemType)) {
+                player.hasItem = itemType;
+                io.to(socket.id).emit('updateInventory', itemType);
+                const msg = `[Cheat] ${itemType} 아이템을 획득했습니다!`;
+                socket.emit('gameMessage', msg);
+                socket.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
+            } else {
+                socket.emit('chatMessage', { nickname: 'System', message: "유효하지 않은 아이템입니다. (banana, speed, shield)", playerId: 'system' });
+            }
+        }
         return;
     }
 
@@ -486,9 +528,19 @@ setInterval(() => {
     io.emit('gameMessage', `🎁 선물 상자가 나타났습니다!`);
 }, 15000);
 
-// 초기 아이템
+// 초기 아이템 및 테스트 바나나
 setTimeout(() => {
     spawnItem(); spawnItem();
+
+    // [테스트] 맵 중앙에 임시 바나나 설치
+    if (currentMapData && currentMapData.length > 0) {
+        const cX = (currentMapData[0].length * TILE_SIZE) / 2;
+        const cY = (currentMapData.length * TILE_SIZE) / 2;
+        const testTrapId = 'test_banana_' + Date.now();
+        traps[testTrapId] = { x: cX, y: cY, ownerId: 'system', createdAt: Date.now() };
+        io.emit('updateTraps', traps);
+        console.log('테스트 바나나 생성:', cX, cY);
+    }
 }, 1000);
 
 // 게임 루프 (봇 업데이트)

@@ -1,17 +1,21 @@
-const { ROWS, COLS, TILE_SIZE } = require('./config');
+const { TILE_SIZE } = require('./config');
 
 // 랜덤 스폰 위치 반환
 function getRandomSpawn(mapData) {
-    let x, y, c, r;
+    const rows = mapData.length;
+    const cols = mapData[0].length;
+    let x, y, r, c;
     do {
-        c = Math.floor(Math.random() * COLS);
-        r = Math.floor(Math.random() * ROWS);
+        c = Math.floor(Math.random() * cols);
+        r = Math.floor(Math.random() * rows);
     } while (mapData[r][c] === 1); // 벽이 아닐 때까지 반복
     return { x: c * TILE_SIZE, y: r * TILE_SIZE };
 }
 
 // 봇 충돌 체크 (BOUNDING BOX - 여유 공간 추가)
 function checkBotWallCollision(x, y, mapData) {
+    const rows = mapData.length;
+    const cols = mapData[0].length;
     // 5px 여유를 두어 모서리 끼임 방지
     const margin = 5;
     const points = [
@@ -22,7 +26,7 @@ function checkBotWallCollision(x, y, mapData) {
     ];
 
     for (const p of points) {
-        if (p.r < 0 || p.r >= ROWS || p.c < 0 || p.c >= COLS) return true; // 맵 밖
+        if (p.r < 0 || p.r >= rows || p.c < 0 || p.c >= cols) return true; // 맵 밖
         if (mapData[p.r][p.c] === 1) return true; // 벽
     }
     return false;
@@ -42,7 +46,10 @@ function checkLineOfSight(x1, y1, x2, y2, mapData) {
         const c = Math.floor(cx / TILE_SIZE);
         const r = Math.floor(cy / TILE_SIZE);
 
-        if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+        const rows = mapData.length;
+        const cols = mapData[0].length;
+
+        if (r >= 0 && r < rows && c >= 0 && c < cols) {
             if (mapData[r][c] === 1) return false; // 벽 막힘
         }
 
@@ -63,7 +70,7 @@ function findPath(startX, startY, endX, endY, mapData) {
 
     const queue = [{ c: startC, r: startR, path: [] }];
     const visited = new Set();
-    visited.add(`${startC},${startR}`);
+    visited.add(`${startC},${startR} `);
 
     // 최대 탐색 거리 제한 (너무 멀면 렉 방지)
     let iter = 0;
@@ -82,14 +89,17 @@ function findPath(startX, startY, endX, endY, mapData) {
             { dc: 0, dr: -1 }, { dc: 0, dr: 1 }, { dc: -1, dr: 0 }, { dc: 1, dr: 0 }
         ];
 
+        const rows = mapData.length;
+        const cols = mapData[0].length;
+
         for (const dir of dirs) {
             const nc = c + dir.dc;
             const nr = r + dir.dr;
 
-            if (nc >= 0 && nc < COLS && nr >= 0 && nr < ROWS &&
-                mapData[nr][nc] === 0 && !visited.has(`${nc},${nr}`)) {
+            if (nc >= 0 && nc < cols && nr >= 0 && nr < rows &&
+                mapData[nr][nc] === 0 && !visited.has(`${nc},${nr} `)) {
 
-                visited.add(`${nc},${nr}`);
+                visited.add(`${nc},${nr} `);
                 queue.push({
                     c: nc, r: nr,
                     path: [...path, { c: nc, r: nr }]

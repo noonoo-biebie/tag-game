@@ -20,6 +20,15 @@ const loadingOverlay = document.getElementById('server-loading-overlay'); // 추
 const chatInput = document.getElementById('chat-input');
 const chatMessages = document.getElementById('chat-messages');
 
+// 카메라 객체
+const camera = {
+    x: 0,
+    y: 0,
+    width: 1024,
+    height: 768,
+    zoom: 2.0 // 2배 확대 (픽셀 아트 느낌 & 여백 제거)
+};
+
 // 게임 상태 변수
 let isJoined = false;
 let players = {};
@@ -186,6 +195,22 @@ socket.on('updateTraps', (serverTraps) => {
 
 socket.on('mapUpdate', (newMapData) => {
     map = newMapData;
+
+    // 맵 크기에 따른 줌 레벨 자동 조정
+    const mapW = map[0].length * TILE_SIZE;
+    const mapH = map.length * TILE_SIZE;
+
+    const scaleX = canvas.width / mapW;
+    const scaleY = canvas.height / mapH;
+    const scaleToFit = Math.min(scaleX, scaleY);
+
+    // 맵이 화면보다 작거나 비슷하면(비율 >= 1) -> 화면에 꽉 차게 확대 (전체 보기)
+    // 맵이 화면보다 훨씬 크면(비율 < 1) -> 기본 확대(2.0) 후 스크롤
+    if (scaleToFit >= 1.0) {
+        camera.zoom = scaleToFit;
+    } else {
+        camera.zoom = 2.0;
+    }
 });
 
 socket.on('updateInventory', (itemType) => {
@@ -232,7 +257,13 @@ socket.on('playerSlipped', (data) => {
         else if (keys['arrowright'] || keys['d']) dx = 1;
     }
 
-    // 3. 입력이 없으면 랜덤 방향 (이전 버그: 여기서 dx=0, dy=0이면 아무것도 안 하거나 이상해짐)
+    // 3. 입력이 없으면 마지막 이동 방향 사용 (그래야 밟은 방향으로 미끄러짐)
+    if (dx === 0 && dy === 0) {
+        dx = lastMoveDir.x;
+        dy = lastMoveDir.y;
+    }
+
+    // 혹시라도 0이면 랜덤
     if (dx === 0 && dy === 0) {
         const dirs = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
         const rand = dirs[Math.floor(Math.random() * dirs.length)];
@@ -258,7 +289,7 @@ socket.on('gameMessage', (msg) => {
     if (!isJoined) return;
     gameMessage.innerText = msg;
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v0.9 (Map Update)';
+        gameMessage.innerText = '달리고 잡기 v0.9.6 (Backrooms Update)';
     }, 5000);
 });
 
@@ -328,8 +359,7 @@ socket.on('connect_error', (err) => {
 // --- 렌더링 및 게임 로직 ---
 
 const TILE_SIZE = 32;
-const ROWS = 15;
-const COLS = 20;
+// ROWS, COLS는 동적 맵 크기(map.length 등)를 사용하므로 제거함
 
 let map = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -349,14 +379,52 @@ let map = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 ];
 
+// 초기 맵(기본)에 대한 줌 설정
+(function initZoom() {
+    const mapW = map[0].length * TILE_SIZE;
+    const mapH = map.length * TILE_SIZE;
+    const scale = Math.min(canvas.width / mapW, canvas.height / mapH);
+    if (scale >= 1.0) camera.zoom = scale;
+})();
+
+function draw() {
+    // 화면 클리어
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save(); // 문맥 저장
+    ctx.scale(camera.zoom, camera.zoom); // 화면 확대
+    ctx.translate(-camera.x, -camera.y); // 카메라 시점 이동
+
+    drawMap();
+    drawTraps();
+    drawItems();
+    drawPlayers();
+    drawShadows();   // 그림자(시야 제한) 효과 (게임 좌표계)
+
+    ctx.restore(); // 문맥 복구
+
+    drawInventory(); // UI (카메라 영향 X)
+}
+
 function drawMap() {
-    for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-            if (map[r][c] === 1) {
-                ctx.fillStyle = '#95a5a6';
-                ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-            } else {
-                ctx.fillStyle = '#34495e';
+    // 맵 전체를 순회하지 않고, 카메라에 보이는 영역만 렌더링 (Culling)
+    const startCol = Math.floor(camera.x / TILE_SIZE);
+    const endCol = startCol + (camera.width / TILE_SIZE) + 1;
+    const startRow = Math.floor(camera.y / TILE_SIZE);
+    const endRow = startRow + (camera.height / TILE_SIZE) + 1;
+
+    for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+            if (r >= 0 && r < map.length && c >= 0 && c < map[0].length) {
+                if (map[r][c] === 1) {
+                    ctx.fillStyle = '#95a5a6';
+                    ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                } else {
+                    ctx.fillStyle = '#34495e'; // 배경색 (필요시)
+                    // 빈 공간은 캔버스 배경색이 보이도록 주석 처리하거나 설정
+                    // 최적화: 배경은 draw() 시작 시 fillRect로 한 번에 칠하는 게 나음
+                    ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                }
             }
         }
     }
@@ -464,6 +532,7 @@ function drawInventory() {
 
 // 키 상태 관리
 let keys = {};
+let lastMoveDir = { x: 0, y: 1 }; // [추가] 마지막 이동 방향 기억 (미끄러짐용)
 
 function resetInput() {
     for (let key in keys) {
@@ -510,7 +579,8 @@ function checkWallCollision(newX, newY) {
     for (const p of points) {
         const c = Math.floor(p.x / TILE_SIZE);
         const r = Math.floor(p.y / TILE_SIZE);
-        if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
+        // 동적 맵 크기 사용
+        if (r < 0 || r >= map.length || c < 0 || c >= map[0].length) return true;
         if (map[r][c] === 1) return true;
     }
     return false;
@@ -553,6 +623,9 @@ function processInput(deltaTimeSec) {
     const myPlayer = players[socket.id];
 
     if (dx !== 0 || dy !== 0) {
+        // [추가] 이동 중이라면 마지막 방향 갱신
+        lastMoveDir = { x: dx, y: dy };
+
         // 속도 아이템 적용
         let currentSpeed = BASE_SPEED * speedMultiplier;
         let remainingDist = currentSpeed * deltaTimeSec;
@@ -604,6 +677,48 @@ function processInput(deltaTimeSec) {
 let lastTime = 0;
 let loopRunning = false;
 
+// --- 렌더링 및 카메라 업데이트 ---
+
+// updateCamera는 위에서 정의됨 (또는 여기서 정의)
+// 중복 camera 선언 제거됨
+
+function updateCamera() {
+    const myId = socket.id;
+    if (!myId || !players[myId]) return;
+    const p = players[myId];
+
+    // 줌 레벨에 따른 논리적 화면 크기 계산
+    camera.width = canvas.width / camera.zoom;
+    camera.height = canvas.height / camera.zoom;
+
+    // 플레이어를 화면 중앙에 위치
+    camera.x = p.x - camera.width / 2 + TILE_SIZE / 2;
+    camera.y = p.y - camera.height / 2 + TILE_SIZE / 2;
+
+    // 맵 전체 크기
+    const mapWidth = map[0].length * TILE_SIZE;
+    const mapHeight = map.length * TILE_SIZE;
+
+    // 1. 가로축 처리
+    if (mapWidth < camera.width) {
+        // 맵이 화면보다 작으면 중앙 정렬 (여백이 반반씩 생김)
+        camera.x = -(camera.width - mapWidth) / 2;
+    } else {
+        // 맵이 더 크면 카메라를 맵 안으로 제한
+        camera.x = Math.max(0, Math.min(camera.x, mapWidth - camera.width));
+    }
+
+    // 2. 세로축 처리
+    if (mapHeight < camera.height) {
+        // 맵이 화면보다 작으면 중앙 정렬
+        camera.y = -(camera.height - mapHeight) / 2;
+    } else {
+        // 맵이 더 크면 카메라를 맵 안으로 제한
+        camera.y = Math.max(0, Math.min(camera.y, mapHeight - camera.height));
+    }
+}
+
+
 function update(timestamp) {
     if (!lastTime) lastTime = timestamp;
     const deltaTime = timestamp - lastTime;
@@ -613,6 +728,7 @@ function update(timestamp) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     processInput(validDelta / 1000);
+    updateCamera(); // 카메라 업데이트
 
     const lerpFactor = 0.2;
     Object.keys(players).forEach(id => {
@@ -627,12 +743,7 @@ function update(timestamp) {
         }
     });
 
-    drawMap();
-    drawItems();     // 아이템 그리기
-    drawTraps();     // 트랩 그리기
-    drawPlayers();
-    drawShadows();   // 그림자(시야 제한) 효과
-    drawInventory(); // 인벤토리 그리기
+    draw(); // 렌더링 함수 호출
 
     requestAnimationFrame(update);
 }
@@ -660,7 +771,8 @@ function drawShadows() {
 
     // 2. 그림자 마스크 그리기
     ctx.beginPath();
-    ctx.rect(0, 0, canvas.width, canvas.height); // 전체 화면
+    // 카메라가 보고 있는 영역만큼만 어둡게 칠함 (전체 맵을 칠해도 되지만 최적화)
+    ctx.rect(camera.x, camera.y, camera.width, camera.height);
 
     ctx.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < points.length; i++) {
@@ -678,15 +790,23 @@ function drawShadows() {
     ctx.strokeStyle = '#555';  // 벽 테두리
     ctx.lineWidth = 1;
 
-    for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-            if (map[r][c] === 1) { // 벽이라면 무조건 그림
-                const x = c * TILE_SIZE;
-                const y = r * TILE_SIZE;
+    // 보이는 영역의 벽만 다시 그리기 (Culling)
+    const startCol = Math.floor(camera.x / TILE_SIZE);
+    const endCol = startCol + (camera.width / TILE_SIZE) + 1;
+    const startRow = Math.floor(camera.y / TILE_SIZE);
+    const endRow = startRow + (camera.height / TILE_SIZE) + 1;
 
-                // 그림자 위에 덮어쓰기
-                ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-                ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+    for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+            if (r >= 0 && r < map.length && c >= 0 && c < map[0].length) {
+                if (map[r][c] === 1) { // 벽이라면 무조건 그림
+                    const x = c * TILE_SIZE;
+                    const y = r * TILE_SIZE;
+
+                    // 그림자 위에 덮어쓰기
+                    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                    ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+                }
             }
         }
     }
@@ -704,6 +824,9 @@ function castRay(x, y, angle) {
     const range = 1000;
     const step = 2; // [정밀도 향상] 8 -> 2 (벽 모서리 인식 개선)
 
+    const mapRows = map.length;
+    const mapCols = map[0].length;
+
     for (let i = 0; i < range; i += step) {
         curX += dx * step;
         curY += dy * step;
@@ -711,7 +834,7 @@ function castRay(x, y, angle) {
         const c = Math.floor(curX / TILE_SIZE);
         const r = Math.floor(curY / TILE_SIZE);
 
-        if (c < 0 || c >= COLS || r < 0 || r >= ROWS) {
+        if (c < 0 || c >= mapCols || r < 0 || r >= mapRows) {
             return { x: curX, y: curY };
         }
 
