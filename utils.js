@@ -1,17 +1,17 @@
-const { ROWS, COLS, TILE_SIZE, MAP_DATA } = require('./config');
+const { ROWS, COLS, TILE_SIZE } = require('./config');
 
 // 랜덤 스폰 위치 반환
-function getRandomSpawn() {
+function getRandomSpawn(mapData) {
     let x, y, c, r;
     do {
         c = Math.floor(Math.random() * COLS);
         r = Math.floor(Math.random() * ROWS);
-    } while (MAP_DATA[r][c] === 1); // 벽이 아닐 때까지 반복
+    } while (mapData[r][c] === 1); // 벽이 아닐 때까지 반복
     return { x: c * TILE_SIZE, y: r * TILE_SIZE };
 }
 
 // 봇 충돌 체크 (BOUNDING BOX - 여유 공간 추가)
-function checkBotWallCollision(x, y) {
+function checkBotWallCollision(x, y, mapData) {
     // 5px 여유를 두어 모서리 끼임 방지
     const margin = 5;
     const points = [
@@ -23,13 +23,13 @@ function checkBotWallCollision(x, y) {
 
     for (const p of points) {
         if (p.r < 0 || p.r >= ROWS || p.c < 0 || p.c >= COLS) return true; // 맵 밖
-        if (MAP_DATA[p.r][p.c] === 1) return true; // 벽
+        if (mapData[p.r][p.c] === 1) return true; // 벽
     }
     return false;
 }
 
 // 두 점 사이의 시야 체크 (벽이 있는지) (Bresenham-like)
-function checkLineOfSight(x1, y1, x2, y2) {
+function checkLineOfSight(x1, y1, x2, y2, mapData) {
     // 4px 단위로 촘촘하게 검사 (벽 관통 방지)
     const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1)) / 4;
     const dx = (x2 - x1) / steps;
@@ -43,7 +43,7 @@ function checkLineOfSight(x1, y1, x2, y2) {
         const r = Math.floor(cy / TILE_SIZE);
 
         if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-            if (MAP_DATA[r][c] === 1) return false; // 벽 막힘
+            if (mapData[r][c] === 1) return false; // 벽 막힘
         }
 
         cx += dx;
@@ -53,7 +53,7 @@ function checkLineOfSight(x1, y1, x2, y2) {
 }
 
 // BFS 경로 탐색 (Grid 기반)
-function findPath(startX, startY, endX, endY) {
+function findPath(startX, startY, endX, endY, mapData) {
     const startC = Math.floor(startX / TILE_SIZE);
     const startR = Math.floor(startY / TILE_SIZE);
     const endC = Math.floor(endX / TILE_SIZE);
@@ -87,7 +87,7 @@ function findPath(startX, startY, endX, endY) {
             const nr = r + dir.dr;
 
             if (nc >= 0 && nc < COLS && nr >= 0 && nr < ROWS &&
-                MAP_DATA[nr][nc] === 0 && !visited.has(`${nc},${nr}`)) {
+                mapData[nr][nc] === 0 && !visited.has(`${nc},${nr}`)) {
 
                 visited.add(`${nc},${nr}`);
                 queue.push({

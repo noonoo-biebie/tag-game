@@ -7,7 +7,7 @@ const io = new Server(server);
 const fs = require('fs');
 
 // [모듈 임포트]
-const { ROWS, COLS, TILE_SIZE, ITEM_TYPES, MAP_DATA } = require('./config');
+const { ROWS, COLS, TILE_SIZE, ITEM_TYPES, MAPS } = require('./config');
 const { getRandomSpawn, checkBotWallCollision } = require('./utils');
 const Bot = require('./bot');
 
@@ -21,6 +21,8 @@ app.get('/', (req, res) => {
 let players = {};
 let taggerId = null;
 let lastTaggerId = null; // 최근 술래 (봇 반격 방지용)
+let currentMapName = 'DEFAULT';
+let currentMapData = MAPS.DEFAULT;
 
 // --- 아이템 시스템 ---
 let items = {};
@@ -33,7 +35,7 @@ function spawnItem() {
         delete items[oldestId];
     }
 
-    const pos = getRandomSpawn();
+    const pos = getRandomSpawn(currentMapData);
     const id = itemNextId++;
     const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
 
@@ -207,7 +209,7 @@ function checkCollision(moverId) {
 // 봇 생성
 function createBot() {
     const botId = 'bot_' + Date.now();
-    const bot = new Bot(botId);
+    const bot = new Bot(botId, currentMapData);
 
     // 성격 설정 (봇 밸런싱) - bot.js 내부 로직 활용하지만 여기서 players 넘겨주면 더 좋음
     // Bot 생성자 내 getRandomPersonality는 인자 없으면 랜덤.
@@ -242,7 +244,7 @@ function resetGame() {
     // 플레이어/봇 재배치
     for (const id in players) {
         const p = players[id];
-        const spawn = getRandomSpawn();
+        const spawn = getRandomSpawn(currentMapData);
         p.x = spawn.x;
         p.y = spawn.y;
         p.targetX = p.x;
@@ -300,7 +302,7 @@ function handleJoinGame(socket, data) {
 
     console.log('게임 입장:', data.nickname);
 
-    const spawnPos = getRandomSpawn();
+    const spawnPos = getRandomSpawn(currentMapData);
     players[socket.id] = {
         x: spawnPos.x,
         y: spawnPos.y,
@@ -317,6 +319,7 @@ function handleJoinGame(socket, data) {
     }
 
     socket.emit('joinSuccess', players[socket.id]);
+    socket.emit('mapUpdate', currentMapData); // 맵 데이터 전송
     socket.emit('currentPlayers', players);
     socket.emit('updateItems', items);
     socket.emit('updateTraps', traps);
@@ -438,11 +441,34 @@ function handleChatMessage(socket, msg) {
         return;
     }
 
+    // 맵 변경 커맨드
+    if (cmd.startsWith('/map')) {
+        const mapName = cmd.split(' ')[1];
+        if (mapName && MAPS[mapName.toUpperCase()]) {
+            currentMapName = mapName.toUpperCase();
+            currentMapData = MAPS[currentMapName];
+
+            // 모든 플레이어/봇 재배치 및 리셋
+            resetGame(); // resetGame 내에서 getRandomSpawn(currentMapData) 사용됨
+
+            io.emit('mapUpdate', currentMapData);
+            const mapMsg = `🗺️ 맵이 [${currentMapName}]으로 변경되었습니다!`;
+            io.emit('gameMessage', mapMsg);
+            io.emit('chatMessage', { nickname: 'System', message: mapMsg, playerId: 'system' });
+        } else {
+            const availMaps = Object.keys(MAPS).join(', ');
+            const errMsg = `존재하지 않는 맵입니다. 사용 가능: ${availMaps}`;
+            socket.emit('chatMessage', { nickname: 'System', message: errMsg, playerId: 'system' });
+        }
+        return;
+    }
+
     if (cmd === '/help' || cmd === '/명령어' || cmd === '/?') {
         const helpMsg = '<br>📜 <b>명령어 목록</b><br>' +
             '🤖 <b>/bot</b> : 봇 소환<br>' +
             '👋 <b>/kickbot</b> : 봇 추방<br>' +
             '🔄 <b>/reset</b> : 맵 초기화<br>' +
+            '🗺️ <b>/map [이름]</b> : 맵 변경 (DEFAULT, MAZE, OPEN)<br>' +
             '👁️ <b>/fog</b> : 시야 제한 해제 (치트)<br>' +
             '📝 <b>/피드백확인</b> : 수집된 피드백 보기';
 
@@ -489,7 +515,7 @@ setInterval(() => {
             // [중요] 봇에게 게임 state와 callback 전달
             players[id].update(players, taggerId, lastTaggerId, {
                 handleItemEffect: handleItemEffect
-            });
+            }, currentMapData);
 
             // 동기화
             io.emit('playerMoved', players[id]);

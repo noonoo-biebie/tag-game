@@ -2,14 +2,14 @@ const { ROWS, COLS, TILE_SIZE, BOT_PERSONALITIES } = require('./config');
 const { getRandomSpawn, checkBotWallCollision, checkLineOfSight, findPath } = require('./utils');
 
 class Bot {
-    constructor(id) {
+    constructor(id, mapData) {
         this.id = id;
         this.playerId = id; // 클라이언트 호환성
         this.nickname = '🤖Bot_' + id.slice(0, 4);
         this.color = this.getRandomColor();
         this.personality = this.getRandomPersonality();
 
-        const spawn = getRandomSpawn();
+        const spawn = getRandomSpawn(mapData);
         this.x = spawn.x;
         this.y = spawn.y;
         this.targetX = this.x; // 이동 목표
@@ -74,7 +74,7 @@ class Bot {
     }
 
     // 메인 업데이트 루프
-    update(players, taggerId, lastTaggerId, callbacks) {
+    update(players, taggerId, lastTaggerId, callbacks, mapData) {
         // [0] 기절 상태 체크
         if (this.stunnedUntil && Date.now() < this.stunnedUntil) return;
 
@@ -93,7 +93,7 @@ class Bot {
             if (nextX < 0) nextX = 0; else if (nextX > (COLS - 1) * TILE_SIZE) nextX = (COLS - 1) * TILE_SIZE;
             if (nextY < 0) nextY = 0; else if (nextY > (ROWS - 1) * TILE_SIZE) nextY = (ROWS - 1) * TILE_SIZE;
 
-            if (checkBotWallCollision(nextX, nextY)) {
+            if (checkBotWallCollision(nextX, nextY, mapData)) {
                 this.isSlipped = false;
             } else {
                 const distMoved = Math.hypot(this.x - nextX, this.y - nextY);
@@ -118,7 +118,7 @@ class Bot {
         // 3. AI 로직
         if (taggerId === this.id) {
             // [술래]
-            const visibleTarget = this.findBestTarget(players, lastTaggerId);
+            const visibleTarget = this.findBestTarget(players, lastTaggerId, mapData);
 
             if (visibleTarget) {
                 // [추격] 타겟 보임
@@ -132,13 +132,13 @@ class Bot {
                         this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
                         this.wiggleTimer = Date.now();
                     }
-                    this.moveToDir();
+                    this.moveToDir(mapData);
                 } else {
                     const dx = visibleTarget.x - this.x;
                     const dy = visibleTarget.y - this.y;
                     const angle = Math.atan2(dy, dx);
                     this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-                    this.moveToDir();
+                    this.moveToDir(mapData);
                 }
 
             } else if (this.chaseMemory) {
@@ -151,11 +151,11 @@ class Bot {
                     const dy = this.chaseMemory.y - this.y;
                     const angle = Math.atan2(dy, dx);
                     this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-                    this.moveToDir();
+                    this.moveToDir(mapData);
                 }
             } else {
                 // [순찰]
-                this.doPatrol();
+                this.doPatrol(mapData);
             }
 
         } else {
@@ -163,27 +163,27 @@ class Bot {
             if (taggerId && players[taggerId]) {
                 const tagger = players[taggerId];
                 if (Math.hypot(tagger.x - this.x, tagger.y - this.y) < 250 &&
-                    checkLineOfSight(this.x + 16, this.y + 16, tagger.x + 16, tagger.y + 16)) {
+                    checkLineOfSight(this.x + 16, this.y + 16, tagger.x + 16, tagger.y + 16, mapData)) {
 
                     const dx = this.x - tagger.x;
                     const dy = this.y - tagger.y;
                     const angle = Math.atan2(dy, dx);
                     this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-                    this.moveToDir();
+                    this.moveToDir(mapData);
                 } else {
-                    this.doPatrol();
+                    this.doPatrol(mapData);
                 }
             } else {
-                this.doPatrol();
+                this.doPatrol(mapData);
             }
         }
 
         this.useItemLogic(callbacks.handleItemEffect);
     }
 
-    doPatrol() {
+    doPatrol(mapData) {
         if (!this.patrolTarget || this.isStuck) {
-            this.patrolTarget = getRandomSpawn();
+            this.patrolTarget = getRandomSpawn(mapData);
             this.isStuck = false;
         }
 
@@ -196,11 +196,11 @@ class Bot {
             const dy = this.patrolTarget.y - this.y;
             const angle = Math.atan2(dy, dx);
             this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-            this.moveToDir();
+            this.moveToDir(mapData);
         }
     }
 
-    moveToDir() {
+    moveToDir(mapData) {
         const speed = this.isSpeeding ? 25 : 15;
 
         // X축
@@ -208,7 +208,7 @@ class Bot {
         let hitX = false;
         if (nextX < 0) { nextX = 0; hitX = true; }
         if (nextX > (COLS - 1) * TILE_SIZE) { nextX = (COLS - 1) * TILE_SIZE; hitX = true; }
-        if (checkBotWallCollision(nextX, this.y)) hitX = true;
+        if (checkBotWallCollision(nextX, this.y, mapData)) hitX = true;
         else this.x = nextX;
 
         // Y축
@@ -216,7 +216,7 @@ class Bot {
         let hitY = false;
         if (nextY < 0) { nextY = 0; hitY = true; }
         if (nextY > (ROWS - 1) * TILE_SIZE) { nextY = (ROWS - 1) * TILE_SIZE; hitY = true; }
-        if (checkBotWallCollision(this.x, nextY)) hitY = true;
+        if (checkBotWallCollision(this.x, nextY, mapData)) hitY = true;
         else this.y = nextY;
 
         // 양방향 막힘 시 랜덤 탈출 (끼임 방지)
@@ -236,7 +236,7 @@ class Bot {
     }
 
     // [Legacy] Wander using BFS (Used if needed, currently mainly using doPatrol)
-    wander() {
+    wander(mapData) {
         if (this.path.length > 0) {
             const nextNode = this.path[0];
             const dx = nextNode.x - this.x;
@@ -247,14 +247,14 @@ class Bot {
                 this.path.shift();
             } else {
                 this.moveDir = { x: dx / dist, y: dy / dist };
-                this.moveToDir();
+                this.moveToDir(mapData);
             }
             return;
         }
 
-        const target = getRandomSpawn();
+        const target = getRandomSpawn(mapData);
         this.wanderTarget = target;
-        const newPath = findPath(this.x, this.y, target.x, target.y);
+        const newPath = findPath(this.x, this.y, target.x, target.y, mapData);
         if (newPath.length > 0) {
             this.path = newPath;
         } else {
@@ -263,7 +263,7 @@ class Bot {
         }
     }
 
-    findBestTarget(players, lastTaggerId) {
+    findBestTarget(players, lastTaggerId, mapData) {
         let closest = null;
         let minDist = Infinity;
         for (const pid in players) {
@@ -272,7 +272,7 @@ class Bot {
             const dist = Math.hypot(p.x - this.x, p.y - this.y);
 
             // 시야 체크
-            const isVisible = checkLineOfSight(this.x + 16, this.y + 16, p.x + 16, p.y + 16);
+            const isVisible = checkLineOfSight(this.x + 16, this.y + 16, p.x + 16, p.y + 16, mapData);
 
             if (dist < minDist && isVisible) {
                 minDist = dist;

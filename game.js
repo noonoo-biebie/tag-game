@@ -197,6 +197,10 @@ socket.on('updateTraps', (serverTraps) => {
     traps = serverTraps;
 });
 
+socket.on('mapUpdate', (newMapData) => {
+    map = newMapData;
+});
+
 socket.on('updateInventory', (itemType) => {
     myItem = itemType;
 });
@@ -267,7 +271,7 @@ socket.on('gameMessage', (msg) => {
     if (!isJoined) return;
     gameMessage.innerText = msg;
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v0.7';
+        gameMessage.innerText = '달리고 잡기 v0.9 (Map Update)';
     }, 5000);
 });
 
@@ -340,7 +344,7 @@ const TILE_SIZE = 32;
 const ROWS = 15;
 const COLS = 20;
 
-const map = [
+let map = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
