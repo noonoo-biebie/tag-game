@@ -25,6 +25,8 @@ let lastTaggerId = null; // 최근 술래 (봇 반격 방지용)
 let currentMapName = 'DEFAULT';
 let currentMapData = MAPS.DEFAULT;
 let gameMode = 'TAG'; // [복구] 게임 모드 변수 선언 (TAG/ZOMBIE)
+let roundTime = 0;
+let roundTimer = null;
 
 // --- 아이템 시스템 ---
 let items = {};
@@ -295,6 +297,25 @@ function checkZombieWin() {
     }
 }
 
+function startRoundTimer(seconds) {
+    if (roundTimer) clearInterval(roundTimer);
+    roundTime = seconds;
+    io.emit('updateTimer', roundTime);
+
+    roundTimer = setInterval(() => {
+        roundTime--;
+        io.emit('updateTimer', roundTime);
+
+        if (roundTime <= 0) {
+            clearInterval(roundTimer);
+            if (gameMode === 'ZOMBIE') {
+                io.emit('gameMessage', '🎉 생존자 승리! 3분 동안 버텨냈습니다! 🎉');
+                setTimeout(() => resetGame(), 5000);
+            }
+        }
+    }, 1000);
+}
+
 // 봇 생성
 function createBot() {
     const botId = 'bot_' + Date.now();
@@ -324,7 +345,53 @@ function createBot() {
 let resetRequestTime = 0;
 let resetRequesterId = null;
 
+// 좀비 모드 카운트다운 시작
+function startZombieCountdown() {
+    let timeLeft = 10;
+    const countdownMsg = (sec) => `⏳ ${sec}초 뒤에 좀비 바이러스가 퍼집니다!`;
+
+    io.emit('gameMessage', countdownMsg(timeLeft));
+    io.emit('chatMessage', { nickname: 'System', message: countdownMsg(timeLeft), playerId: 'system' });
+
+    const countdownInterval = setInterval(() => {
+        if (gameMode !== 'ZOMBIE') {
+            clearInterval(countdownInterval);
+            return;
+        }
+
+        timeLeft--;
+        if (timeLeft > 0) {
+            io.emit('gameMessage', countdownMsg(timeLeft));
+        } else {
+            clearInterval(countdownInterval);
+
+            // 감염 시작
+            const ids = Object.keys(players);
+            if (ids.length > 0) {
+                const hostId = ids[Math.floor(Math.random() * ids.length)];
+                const host = players[hostId];
+
+                if (host && !host.isZombie) {
+                    host.isZombie = true;
+                    host.originalColor = host.color;
+                    host.color = '#2ecc71';
+
+                    io.emit('playerMoved', host);
+                    io.emit('gameMessage', `🧟 [${host.nickname}] 님이 최초의 좀비(숙주)가 되었습니다!!`);
+                    io.emit('zombieInfect', { targetId: hostId });
+
+                    // 3분 타이머 시작
+                    startRoundTimer(180);
+                }
+            }
+        }
+    }, 1000);
+}
+
 function resetGame() {
+    if (roundTimer) clearInterval(roundTimer);
+    roundTime = 0;
+    io.emit('updateTimer', 0);
     items = {};
     traps = {};
     io.emit('updateItems', items);
@@ -364,6 +431,7 @@ function resetGame() {
     } else if (gameMode === 'ZOMBIE') {
         taggerId = null; // 좀비 모드는 술래 개념 대신 좀비가 있음
         io.emit('updateTagger', null);
+        startZombieCountdown();
     }
 
     io.emit('currentPlayers', players);
@@ -529,23 +597,23 @@ function handleChatMessage(socket, msg) {
     }
 
     if (cmd === '/kickbot' || cmd === '/removebot') {
-        let botId = null;
+        let removedCount = 0;
         const ids = Object.keys(players);
-        for (let i = ids.length - 1; i >= 0; i--) {
-            if (players[ids[i]] instanceof Bot) {
-                botId = ids[i];
-                break;
-            }
-        }
 
-        if (botId) {
-            delete players[botId];
-            io.emit('disconnectPlayer', botId);
-            const kickMsg = `[${player.nickname}] 님이 봇을 추방했습니다! 👋`;
+        ids.forEach(id => {
+            if (id.startsWith('bot_') || players[id] instanceof Bot) {
+                delete players[id];
+                io.emit('disconnectPlayer', id);
+                removedCount++;
+            }
+        });
+
+        if (removedCount > 0) {
+            const kickMsg = `🤖 봇 ${removedCount}명을 모두 추방했습니다! 👋`;
             io.emit('gameMessage', kickMsg);
             io.emit('chatMessage', { nickname: 'System', message: kickMsg, playerId: 'system' });
 
-            if (taggerId === botId) {
+            if (gameMode === 'TAG' && players[taggerId] === undefined) {
                 const remaining = Object.keys(players);
                 if (remaining.length > 0) {
                     taggerId = remaining[0];
@@ -604,43 +672,7 @@ function handleChatMessage(socket, msg) {
 
             resetGame();
 
-            // [수정] 10초 실시간 카운트다운
-            let timeLeft = 10;
-            const countdownMsg = (sec) => `⏳ ${sec}초 뒤에 좀비 바이러스가 퍼집니다!`;
 
-            io.emit('gameMessage', countdownMsg(timeLeft));
-            io.emit('chatMessage', { nickname: 'System', message: countdownMsg(timeLeft), playerId: 'system' });
-
-            const countdownInterval = setInterval(() => {
-                if (gameMode !== 'ZOMBIE') {
-                    clearInterval(countdownInterval);
-                    return;
-                }
-
-                timeLeft--;
-                if (timeLeft > 0) {
-                    io.emit('gameMessage', countdownMsg(timeLeft));
-                } else {
-                    clearInterval(countdownInterval);
-
-                    // 감염 시작
-                    const ids = Object.keys(players);
-                    if (ids.length > 0) {
-                        const hostId = ids[Math.floor(Math.random() * ids.length)];
-                        const host = players[hostId];
-
-                        if (host && !host.isZombie) {
-                            host.isZombie = true;
-                            host.originalColor = host.color; // 원래 색상 저장
-                            host.color = '#2ecc71'; // [복구] 좀비 색상 강제 변경
-
-                            io.emit('playerMoved', host);
-                            io.emit('gameMessage', `🧟 [${host.nickname}] 님이 최초의 좀비(숙주)가 되었습니다!!`);
-                            io.emit('zombieInfect', { targetId: hostId });
-                        }
-                    }
-                }
-            }, 1000);
 
         } else if (mode === 'tag') {
             gameMode = 'TAG';
@@ -725,15 +757,7 @@ setInterval(() => {
 setTimeout(() => {
     spawnItem(); spawnItem();
 
-    // [테스트] 맵 중앙에 임시 바나나 설치
-    if (currentMapData && currentMapData.length > 0) {
-        const cX = (currentMapData[0].length * TILE_SIZE) / 2;
-        const cY = (currentMapData.length * TILE_SIZE) / 2;
-        const testTrapId = 'test_banana_' + Date.now();
-        traps[testTrapId] = { x: cX, y: cY, ownerId: 'system', createdAt: Date.now() };
-        io.emit('updateTraps', traps);
-        console.log('테스트 바나나 생성:', cX, cY);
-    }
+
 }, 1000);
 
 // 게임 루프 (봇 업데이트)

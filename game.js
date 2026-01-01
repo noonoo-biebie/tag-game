@@ -40,6 +40,7 @@ let gameMode = 'TAG'; // [추가]
 // 속도 관련 변수
 const BASE_SPEED = 240;
 let speedMultiplier = 1.0;
+let gameTime = 0; // [추가] 남은 시간
 
 // 트랩 및 상태 변수
 let traps = {};
@@ -352,6 +353,10 @@ socket.on('tagOccurred', (data) => {
             overlay.style.display = 'none';
         }, 2000);
     }
+});
+
+socket.on('updateTimer', (time) => {
+    gameTime = time;
 });
 
 socket.on('connect', () => {
@@ -1010,7 +1015,7 @@ function drawHUD() {
 
     const padding = 10;
     const boxWidth = 140;
-    const boxHeight = 70;
+    const boxHeight = 100; // [수정] 높이 증가
     const x = canvas.width - boxWidth - padding;
     const y = padding;
 
@@ -1033,4 +1038,11 @@ function drawHUD() {
 
     ctx.fillStyle = '#2ecc71';
     ctx.fillText(`🧟 좀비: ${zombies}`, textX, textY + 30);
+
+    // 타이머 표시
+    ctx.fillStyle = '#f1c40f';
+    const min = Math.floor(gameTime / 60);
+    const sec = gameTime % 60;
+    const timeStr = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+    ctx.fillText(`⏱️ 시간: ${timeStr}`, textX, textY + 60);
 }

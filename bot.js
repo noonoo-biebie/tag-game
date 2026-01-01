@@ -168,27 +168,73 @@ class Bot {
                     distToThreat = Math.hypot(threat.x - this.x, threat.y - this.y);
                 }
             }
+            // 봇 역할 확인 (추격자 여부)
+            const isChaser = (gameMode === 'ZOMBIE' && this.isZombie) || (gameMode === 'TAG' && taggerId === this.id);
+
             if (threat) {
-                let canSeeThreat = false;
-                if (distToThreat < 350) {
-                    if (checkLineOfSight(this.x + 16, this.y + 16, threat.x + 16, threat.y + 16, mapData)) canSeeThreat = true;
+                // 시야 체크
+                let canSee = false;
+                // 추격자는 시야가 좀 더 넓음 (400), 도망자는 (250)
+                const sightRange = isChaser ? 400 : 250;
+
+                if (distToThreat < sightRange) {
+                    if (checkLineOfSight(this.x + 16, this.y + 16, threat.x + 16, threat.y + 16, mapData)) {
+                        canSee = true;
+                    }
                 }
-                if (this.isFleeing) {
-                    if (distToThreat > 350) this.isFleeing = false;
+
+                if (isChaser) {
+                    // [추격자 로직]
+                    if (canSee) {
+                        // 1. 보이면 추격 & 위치 기억
+                        this.chaseMemory = { x: threat.x, y: threat.y };
+                        const angle = Math.atan2(threat.y - this.y, threat.x - this.x);
+                        this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+                        this.moveToDir(mapData);
+                    } else {
+                        // 2. 안 보이면 기억된 위치로 이동
+                        if (this.chaseMemory) {
+                            const dx = this.chaseMemory.x - this.x;
+                            const dy = this.chaseMemory.y - this.y;
+                            if (Math.hypot(dx, dy) < 32) {
+                                this.chaseMemory = null; // 도착했으나 없음 -> 순찰 복귀
+                                this.doPatrol(mapData);
+                            } else {
+                                const angle = Math.atan2(dy, dx);
+                                this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+                                this.moveToDir(mapData);
+                            }
+                        } else {
+                            this.doPatrol(mapData);
+                        }
+                    }
                 } else {
-                    if (distToThreat < 250 && canSeeThreat) this.isFleeing = true;
+                    // [도망자 로직]
+                    if (canSee) {
+                        // 반대로 도망
+                        const angle = Math.atan2(this.y - threat.y, this.x - threat.x); // 내 위치 - 적 위치
+                        this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+                        this.moveToDir(mapData);
+                    } else {
+                        this.doPatrol(mapData);
+                    }
                 }
-                if (this.isFleeing) {
-                    const dx = this.x - threat.x;
-                    const dy = this.y - threat.y;
-                    const angle = Math.atan2(dy, dx);
-                    this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-                    this.moveToDir(mapData);
+            } else {
+                // 위협/타겟 없음 -> 기억된 위치가 남았다면 확인 (추격자 한정)
+                if (isChaser && this.chaseMemory) {
+                    const dx = this.chaseMemory.x - this.x;
+                    const dy = this.chaseMemory.y - this.y;
+                    if (Math.hypot(dx, dy) < 32) {
+                        this.chaseMemory = null;
+                        this.doPatrol(mapData);
+                    } else {
+                        const angle = Math.atan2(dy, dx);
+                        this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+                        this.moveToDir(mapData);
+                    }
                 } else {
                     this.doPatrol(mapData);
                 }
-            } else {
-                this.doPatrol(mapData);
             }
         }
 
@@ -221,8 +267,11 @@ class Bot {
         // X축
         let nextX = this.x + this.moveDir.x * speed;
         let hitX = false;
+        const mapRows = mapData.length;
+        const mapCols = mapData[0].length;
+
         if (nextX < 0) { nextX = 0; hitX = true; }
-        if (nextX > (COLS - 1) * TILE_SIZE) { nextX = (COLS - 1) * TILE_SIZE; hitX = true; }
+        if (nextX > (mapCols - 1) * TILE_SIZE) { nextX = (mapCols - 1) * TILE_SIZE; hitX = true; }
         if (checkBotWallCollision(nextX, this.y, mapData)) hitX = true;
         else this.x = nextX;
 
@@ -230,7 +279,7 @@ class Bot {
         let nextY = this.y + this.moveDir.y * speed;
         let hitY = false;
         if (nextY < 0) { nextY = 0; hitY = true; }
-        if (nextY > (ROWS - 1) * TILE_SIZE) { nextY = (ROWS - 1) * TILE_SIZE; hitY = true; }
+        if (nextY > (mapRows - 1) * TILE_SIZE) { nextY = (mapRows - 1) * TILE_SIZE; hitY = true; }
         if (checkBotWallCollision(this.x, nextY, mapData)) hitY = true;
         else this.y = nextY;
 
@@ -290,8 +339,7 @@ class Bot {
                 // 좀비는 생존자(비좀비)만 추격
                 if (p.isZombie) continue;
             } else {
-                // 기본 술래잡기: 최근 술래 제외, 기절한 사람 제외
-                if (pid === lastTaggerId) continue;
+                // 기본 술래잡기: 기절한 사람 제외
                 if (p.stunnedUntil && Date.now() < p.stunnedUntil) continue;
             }
 
