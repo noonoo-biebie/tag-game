@@ -336,6 +336,27 @@ socket.on('joinSuccess', (myInfo) => {
         loopRunning = true;
         requestAnimationFrame(update);
     }
+
+    // [Keep-Alive] 게임 중일 때만 서버 깨우기 (5분마다)
+    const keepAlive = () => {
+        fetch('/ping')
+            .then(res => res.text())
+            .then(text => {
+                if (text === 'pong') {
+                    // [Debug] 채팅창에 확인 메시지 출력
+                    const div = document.createElement('div');
+                    div.innerHTML = `<span style="color:#7f8c8d; font-size:11px;">[System] 서버 생존 신호 전송 완료 (Pong!)</span>`;
+                    chatMessages.appendChild(div);
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            })
+            .catch(err => console.log('Keep-alive ping failed'));
+    };
+
+    // 입장 직후 1회 테스트
+    setTimeout(keepAlive, 5000);
+    // 이후 4분마다 반복
+    setInterval(keepAlive, 4 * 60 * 1000);
 });
 
 // --- 소켓 이벤트 핸들링 ---

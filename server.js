@@ -17,6 +17,11 @@ app.get('/', (req, res) => {
     res.sendFile(__dirname + '/index.html');
 });
 
+// [Service] Keep-Alive Ping Endpoint
+app.get('/ping', (req, res) => {
+    res.status(200).send('pong');
+});
+
 // 게임 상태 변수
 let players = {};
 let taggerId = null;
