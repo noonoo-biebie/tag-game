@@ -287,9 +287,15 @@ function checkCollision(moverId) {
                     // [추가] 감염 직후 2초 기절 (연쇄 감염 방지)
                     human.stunnedUntil = Date.now() + 2000;
 
+                    // [추가] 공격한 좀비도 0.5초 경직 (마구잡이 사냥 방지)
+                    zombie.stunnedUntil = Date.now() + 500;
+
                     io.emit('playerMoved', human);
+                    io.emit('playerMoved', zombie);
                     io.emit('gameMessage', `🧟 [${human.nickname}] 님이 좀비에게 감염되었습니다!`);
-                    io.emit('zombieInfect', { targetId: humanId });
+
+                    const zombieId = (zombie === mover) ? moverId : targetId;
+                    io.emit('zombieInfect', { targetId: humanId, attackerId: zombieId });
 
                     checkZombieWin();
                     break;
