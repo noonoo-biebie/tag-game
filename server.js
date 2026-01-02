@@ -27,6 +27,9 @@ let currentMapData = MAPS.DEFAULT;
 let gameMode = 'TAG'; // [복구] 게임 모드 변수 선언 (TAG/ZOMBIE)
 let roundTime = 0;
 let roundTimer = null;
+// [통계 변수 추가]
+let gameStartTime = 0;
+let initialHostId = null;
 
 // --- 아이템 시스템 ---
 let items = {};
@@ -263,12 +266,26 @@ function checkCollision(moverId) {
                     if (!human.originalColor) human.originalColor = human.color;
                     human.color = zombieColors[Math.floor(Math.random() * zombieColors.length)];
 
-                    // 봇 아이콘 변경 (🤖 -> 🧟)
-                    if (human.nickname.includes('🤖')) {
+                    // [수정] 감염 시 닉네임 변경 (봇/플레이어 공통)
+                    if (human instanceof Bot) {
                         human.nickname = human.nickname.replace('🤖', '🧟');
-                    } else if (!human.nickname.includes('🧟')) {
-                        // 플레이어도 원하면 아이콘 추가? (일단 봇만 요청사항)
+                        // 이름 변경: Bot_ -> Zom_
+                        if (human.nickname.includes('Bot_')) {
+                            human.nickname = human.nickname.replace('Bot_', 'Zom_');
+                        }
+                    } else {
+                        // 플레이어: 닉네임 앞에 🧟 강제 부착
+                        if (!human.nickname.startsWith('🧟 ')) {
+                            human.nickname = '🧟 ' + human.nickname;
+                        }
                     }
+
+                    // [통계] 감염 기록
+                    if (zombie.stats) zombie.stats.infectionCount++;
+                    if (human.stats) human.stats.survivalTime = Date.now() - gameStartTime;
+
+                    // [추가] 감염 직후 2초 기절 (연쇄 감염 방지)
+                    human.stunnedUntil = Date.now() + 2000;
 
                     io.emit('playerMoved', human);
                     io.emit('gameMessage', `🧟 [${human.nickname}] 님이 좀비에게 감염되었습니다!`);
@@ -283,17 +300,51 @@ function checkCollision(moverId) {
 }
 
 function checkZombieWin() {
-    // 생존자 수 체크
     const ids = Object.keys(players);
     const survivors = ids.filter(id => !players[id].isZombie);
+    const zombies = ids.filter(id => players[id].isZombie);
 
-    if (survivors.length === 0 && ids.length > 0) { // 모든 플레이어가 좀비가 되었을 때
-        io.emit('gameMessage', `🧟 인류가 멸망했습니다... 좀비 승리! 🧟`);
-        // 게임 오버 처리? 리셋?
-        // 일단 메시지만.
+    // 좀비 승리 조건: 생존자 0명 (단, 플레이어가 1명 이상일 때)
+    if (survivors.length === 0 && ids.length > 0) {
+        // [통계 집계]
+        let mvpSurvivor = null; // 생존왕
+        let mvpRunner = null;   // 도망자
+        let mvpInfector = null; // 슈퍼 전파자
+        let hostName = 'Unknown';
+
+        // 1. 생존왕 (Survival Time - infected time)
+        const sortedSurvivors = [...ids].sort((a, b) => ((players[b].stats?.survivalTime || 0) - (players[a].stats?.survivalTime || 0)));
+        if (sortedSurvivors.length > 0) mvpSurvivor = players[sortedSurvivors[0]];
+
+        // 2. 도망자 (Distance - human state only)
+        const sortedRunners = [...ids].sort((a, b) => ((players[b].stats?.distance || 0) - (players[a].stats?.distance || 0)));
+        if (sortedRunners.length > 0) mvpRunner = players[sortedRunners[0]];
+
+        // 3. 슈퍼 전파자 (Infection Count)
+        const sortedInfectors = [...zombies].sort((a, b) => ((players[b].stats?.infectionCount || 0) - (players[a].stats?.infectionCount || 0)));
+        if (sortedInfectors.length > 0) mvpInfector = players[sortedInfectors[0]];
+
+        // 4. 숙주
+        if (initialHostId && players[initialHostId]) hostName = players[initialHostId].nickname;
+        else if (initialHostId) hostName = "나간 플레이어";
+
+        const resultData = {
+            winner: 'zombies', // [추가] 승자 타입
+            survivor: mvpSurvivor ? { name: mvpSurvivor.nickname, val: ((mvpSurvivor.stats?.survivalTime || 0) / 1000).toFixed(1) + '초' } : { name: '-', val: '-' },
+            runner: mvpRunner ? { name: mvpRunner.nickname, val: Math.floor(mvpRunner.stats?.distance || 0) + 'px' } : { name: '-', val: '-' },
+            infector: mvpInfector ? { name: mvpInfector.nickname, val: (mvpInfector.stats?.infectionCount || 0) + '명' } : { name: '-', val: '-' },
+            host: hostName
+        };
+
+        io.emit('gameMessage', `🧟 인류 멸망! 좀비 승리! 결과판을 확인하세요.`);
+        io.emit('gameResult', resultData);
+
+        // 타이머 중지 및 리셋 예약
+        if (roundTimer) clearInterval(roundTimer);
+        setTimeout(() => resetGame(), 10000);
+
     } else if (survivors.length > 0 && ids.length > 0) {
-        // 생존자 수 알림 (매번 하면 시끄러우니 생략하거나 변경 시에만)
-        // io.emit('gameMessage', `생존자 ${survivors.length}명 남았습니다.`);
+        // 생존자 수 알림용 (필요시)
     }
 }
 
@@ -309,8 +360,41 @@ function startRoundTimer(seconds) {
         if (roundTime <= 0) {
             clearInterval(roundTimer);
             if (gameMode === 'ZOMBIE') {
+                // [생존자 승리]
                 io.emit('gameMessage', '🎉 생존자 승리! 3분 동안 버텨냈습니다! 🎉');
-                setTimeout(() => resetGame(), 5000);
+
+                // 통계 및 명단 집계
+                const ids = Object.keys(players);
+                const survivors = ids.filter(id => !players[id].isZombie);
+                const survivorNames = survivors.map(id => players[id].nickname);
+
+                // MVP 계산 (도망자, 슈퍼전파자 등도 궁금할 수 있으니)
+                const zombies = ids.filter(id => players[id].isZombie);
+
+                let mvpRunner = null;   // 도망자
+                let mvpInfector = null; // 슈퍼 전파자
+                let hostName = 'Unknown';
+                if (initialHostId && players[initialHostId]) hostName = players[initialHostId].nickname;
+                else if (initialHostId) hostName = "나간 플레이어";
+
+                const sortedRunners = [...ids].sort((a, b) => ((players[b].stats?.distance || 0) - (players[a].stats?.distance || 0)));
+                if (sortedRunners.length > 0) mvpRunner = players[sortedRunners[0]];
+
+                const sortedInfectors = [...zombies].sort((a, b) => ((players[b].stats?.infectionCount || 0) - (players[a].stats?.infectionCount || 0)));
+                if (sortedInfectors.length > 0) mvpInfector = players[sortedInfectors[0]];
+
+                const resultData = {
+                    winner: 'survivors', // 승자 타입
+                    survivorList: survivorNames,
+                    runner: mvpRunner ? { name: mvpRunner.nickname, val: Math.floor(mvpRunner.stats?.distance || 0) + 'px' } : { name: '-', val: '-' },
+                    infector: mvpInfector ? { name: mvpInfector.nickname, val: (mvpInfector.stats?.infectionCount || 0) + '명' } : { name: '-', val: '-' },
+                    host: hostName
+                };
+
+                io.emit('gameResult', resultData);
+
+                // 10초 후 리셋
+                setTimeout(() => resetGame(), 10000);
             }
         }
     }, 1000);
@@ -318,8 +402,12 @@ function startRoundTimer(seconds) {
 
 // 봇 생성
 function createBot() {
-    const botId = 'bot_' + Date.now();
+    // [버그 수정] Date.now() 중복 방지를 위해 난수 추가
+    const botId = 'bot_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
     const bot = new Bot(botId, currentMapData);
+
+    // [통계] 봇 통계 초기화
+    bot.stats = { distance: 0, infectionCount: 0, survivalTime: 0 };
 
     // 성격 설정 (봇 밸런싱) - bot.js 내부 로직 활용하지만 여기서 players 넘겨주면 더 좋음
     // Bot 생성자 내 getRandomPersonality는 인자 없으면 랜덤.
@@ -347,7 +435,7 @@ let resetRequesterId = null;
 
 // 좀비 모드 카운트다운 시작
 function startZombieCountdown() {
-    let timeLeft = 10;
+    let timeLeft = 15; // [수정] 15초로 증가
     const countdownMsg = (sec) => `⏳ ${sec}초 뒤에 좀비 바이러스가 퍼집니다!`;
 
     io.emit('gameMessage', countdownMsg(timeLeft));
@@ -372,9 +460,26 @@ function startZombieCountdown() {
                 const host = players[hostId];
 
                 if (host && !host.isZombie) {
+                    // [통계] 기록 시작
+                    gameStartTime = Date.now();
+                    initialHostId = hostId;
+
                     host.isZombie = true;
                     host.originalColor = host.color;
                     host.color = '#2ecc71';
+
+                    // [수정] 숙주 닉네임 변경 (봇/플레이어 공통)
+                    if (host instanceof Bot) {
+                        host.nickname = host.nickname.replace('🤖', '🧟');
+                        if (host.nickname.includes('Bot_')) {
+                            host.nickname = host.nickname.replace('Bot_', 'Zom_');
+                        }
+                    } else {
+                        // 플레이어도 🧟 접두사 추가
+                        if (!host.nickname.startsWith('🧟 ')) {
+                            host.nickname = '🧟 ' + host.nickname;
+                        }
+                    }
 
                     io.emit('playerMoved', host);
                     io.emit('gameMessage', `🧟 [${host.nickname}] 님이 최초의 좀비(숙주)가 되었습니다!!`);
@@ -412,7 +517,18 @@ function resetGame() {
         io.emit('mapUpdate', currentMapData);
     }
 
-    // 플레이어/봇 재배치
+    // [수정] 봇 초기화 (완전 재소환)
+    // 좀비 상태나 이름이 꼬이는 문제를 방지하기 위해 기존 봇을 모두 삭제하고 새로 생성
+    let botCount = 0;
+    Object.keys(players).forEach(id => {
+        if (players[id] instanceof Bot) {
+            botCount++;
+            delete players[id];
+            io.emit('disconnectPlayer', id);
+        }
+    });
+
+    // 플레이어 재배치 (봇은 제외됨)
     for (const id in players) {
         const p = players[id];
         const spawn = getRandomSpawn(currentMapData);
@@ -430,8 +546,25 @@ function resetGame() {
         p.isZombie = false;
         if (p.originalColor) p.color = p.originalColor; // 원래 색 복구
 
+        // [수정] 닉네임 복구 (🧟 접두사 제거)
+        if (p.nickname && p.nickname.startsWith('🧟 ')) {
+            p.nickname = p.nickname.replace('🧟 ', '');
+        }
+
+        // [통계] 초기화
+        p.stats = { distance: 0, infectionCount: 0, survivalTime: 0 };
+
         // [추가] 클라이언트 인벤토리 초기화 이벤트 전송
         io.to(id).emit('updateInventory', null);
+    }
+
+    // [통계] 전역 변수 초기화
+    gameStartTime = 0;
+    initialHostId = null;
+
+    // 봇 다시 소환
+    for (let i = 0; i < botCount; i++) {
+        createBot();
     }
 
     // 모드별 초기화
@@ -498,7 +631,8 @@ function handleJoinGame(socket, data) {
         y: spawnPos.y,
         playerId: socket.id,
         color: data.color || '#e74c3c',
-        nickname: data.nickname || '익명'
+        nickname: data.nickname || '익명',
+        stats: { distance: 0, infectionCount: 0, survivalTime: 0 } // [통계] 초기화
     };
 
     if (!taggerId) {
@@ -520,18 +654,25 @@ function handleJoinGame(socket, data) {
 }
 
 function handlePlayerMove(socket, movementData) {
+    // [기절 체크]
     if (players[socket.id] && players[socket.id].stunnedUntil && Date.now() < players[socket.id].stunnedUntil) {
         return;
     }
 
-    if (players[socket.id]) {
-        players[socket.id].x = movementData.x;
-        players[socket.id].y = movementData.y;
-        io.emit('playerMoved', players[socket.id]);
+    const player = players[socket.id];
+    if (player) {
+        // [통계] 인간 상태일 때 이동 거리 누적
+        if (!player.isZombie && player.stats) {
+            const dx = movementData.x - player.x;
+            const dy = movementData.y - player.y;
+            player.stats.distance += Math.hypot(dx, dy);
+        }
+
+        player.x = movementData.x;
+        player.y = movementData.y;
+        io.emit('playerMoved', player);
         checkCollision(socket.id);
         checkItemCollection(socket.id);
-
-
         checkTrapCollision(socket.id);
     }
 }

@@ -110,6 +110,88 @@
     <!-- 피드백 버튼만 남기고 모달은 제거됨 -->
 
     <!-- Socket.io 라이브러리 로드 -->
+    <!-- 결과판 모달 -->
+    <div id="resultBoard"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 2000; color: white; flex-direction: column; align-items: center; justify-content: center; font-family: 'Noto Sans KR', sans-serif;">
+        <!-- 닫기 버튼 (자유 탐험용) -->
+        <span id="closeResultBtn"
+            style="position: absolute; top: 30px; right: 30px; font-size: 3rem; cursor: pointer; color: #fff; opacity: 0.7; transition: opacity 0.3s;">&times;</span>
+
+        <h1
+            style="font-size: 3rem; color: #e74c3c; margin-bottom: 20px; text-shadow: 0 0 20px red; animation: pulse 2s infinite;">
+            🧟 인류 멸망 🧟</h1>
+        <h2 style="margin-bottom: 40px;">좀비가 승리했습니다!</h2>
+
+        <!-- 생존자 리스트 컨테이너 (생존자 승리 시 표시) -->
+        <div id="survivorListContainer"
+            style="display: none; width: 80%; max-width: 800px; background: rgba(46, 204, 113, 0.2); padding: 20px; border-radius: 10px; border: 2px solid #2ecc71; margin-bottom: 20px;">
+            <h3 style="color: #2ecc71; text-align: center; margin: 0 0 15px 0; font-size: 1.5rem;">🎉 위대한 생존자들 🎉</h3>
+            <div id="survivorListContent"
+                style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-height: 150px; overflow-y: auto;">
+                <!-- JS로 채움 -->
+            </div>
+        </div>
+
+        <div id="mvpGrid"
+            style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 80%; max-width: 800px;">
+            <!-- MVP 카드들 -->
+            <div class="mvp-card"
+                style="background: #2c3e50; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #ecf0f1; box-shadow: 0 0 10px rgba(236, 240, 241, 0.3);">
+                <div style="font-size: 1.5rem;">🛡️ 생존왕</div>
+                <div style="font-size: 0.9rem; color: #bdc3c7;">(가장 오래 버팀)</div>
+                <div id="resSurvivor" style="font-size: 1.8rem; margin-top: 10px; color: #f1c40f; font-weight: bold;">-
+                </div>
+                <div id="resSurvivorVal" style="font-size: 1rem; margin-top: 5px;"></div>
+            </div>
+
+            <div class="mvp-card"
+                style="background: #2c3e50; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #3498db; box-shadow: 0 0 10px rgba(52, 152, 219, 0.3);">
+                <div style="font-size: 1.5rem;">🏃 도망자</div>
+                <div style="font-size: 0.9rem; color: #bdc3c7;">(가장 많이 뜀)</div>
+                <div id="resRunner" style="font-size: 1.8rem; margin-top: 10px; color: #3498db; font-weight: bold;">-
+                </div>
+                <div id="resRunnerVal" style="font-size: 1rem; margin-top: 5px;"></div>
+            </div>
+
+            <div class="mvp-card"
+                style="background: #2c3e50; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #e74c3c; box-shadow: 0 0 10px rgba(231, 76, 60, 0.3);">
+                <div style="font-size: 1.5rem;">🦠 숙주 좀비</div>
+                <div style="font-size: 0.9rem; color: #bdc3c7;">(모든 것의 시작)</div>
+                <div id="resHost" style="font-size: 1.8rem; margin-top: 10px; color: #e74c3c; font-weight: bold;">-
+                </div>
+            </div>
+
+            <div class="mvp-card"
+                style="background: #2c3e50; padding: 20px; border-radius: 10px; text-align: center; border: 2px solid #9b59b6; box-shadow: 0 0 10px rgba(155, 89, 182, 0.3);">
+                <div style="font-size: 1.5rem;">👑 슈퍼 전파자</div>
+                <div style="font-size: 0.9rem; color: #bdc3c7;">(감염 1등)</div>
+                <div id="resInfector" style="font-size: 1.8rem; margin-top: 10px; color: #9b59b6; font-weight: bold;">-
+                </div>
+                <div id="resInfectorVal" style="font-size: 1rem; margin-top: 5px;"></div>
+            </div>
+        </div>
+
+        <div style="margin-top: 40px; font-size: 1.2rem; color: #95a5a6;">
+            ⏳ <span id="resetCountdown">10</span>초 후 게임이 리셋됩니다...
+        </div>
+
+        <style>
+            @keyframes pulse {
+                0% {
+                    transform: scale(1);
+                }
+
+                50% {
+                    transform: scale(1.05);
+                }
+
+                100% {
+                    transform: scale(1);
+                }
+            }
+        </style>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
     <script src="game.js"></script>
 </body>

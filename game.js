@@ -337,6 +337,9 @@ socket.on('playerMoved', (playerInfo) => {
             // 시각 효과
             players[socket.id].isSpeeding = playerInfo.isSpeeding;
             players[socket.id].hasShield = playerInfo.hasShield;
+
+            // [기절 동기화]
+            players[socket.id].stunnedUntil = playerInfo.stunnedUntil;
         }
         return; // 위치 업데이트는 클라이언트 예측 이동 우선
     }
@@ -481,6 +484,13 @@ socket.on('playerSlipped', (data) => {
 socket.on('gameMessage', (msg) => {
     if (!isJoined) return;
     gameMessage.innerText = msg;
+
+    // [추가] 리셋 메시지면 결과판 닫기
+    if (msg.includes('리셋') || msg.includes('초기화')) {
+        const board = document.getElementById('resultBoard');
+        if (board) board.style.display = 'none';
+    }
+
     setTimeout(() => {
         gameMessage.innerText = '달리고 잡기 v0.9.6 (Backrooms Update)';
     }, 5000);
@@ -527,8 +537,128 @@ socket.on('tagOccurred', (data) => {
     }
 });
 
+// [추가] 좀비 감염 시 기절 (기존 태그 기절 로직 재사용)
+socket.on('zombieInfect', (data) => {
+    // 내가 감염대상이라면 기절
+    if (data.targetId === socket.id) {
+        isStunned = true;
+
+        // 화면 흔들림
+        gameContainer.classList.add('shake-effect');
+        setTimeout(() => {
+            gameContainer.classList.remove('shake-effect');
+        }, 500);
+
+        // 2초 후 해제
+        setTimeout(() => {
+            isStunned = false;
+        }, 2000);
+    }
+});
+
 socket.on('updateTimer', (time) => {
     gameTime = time;
+});
+
+// [결과판 닫기 버튼]
+const closeResultBtn = document.getElementById('closeResultBtn');
+if (closeResultBtn) {
+    closeResultBtn.onclick = () => {
+        const board = document.getElementById('resultBoard');
+        if (board) board.style.display = 'none';
+    };
+}
+
+// [통계] 결과 화면 표시
+socket.on('gameResult', (data) => {
+    const board = document.getElementById('resultBoard');
+    if (board) {
+        board.style.display = 'flex'; // Flex로 보여주기
+
+        // 1. 승자 타입에 따른 타이틀 및 UI 전환
+        const h1 = board.querySelector('h1');
+        const h2 = board.querySelector('h2');
+        const survivorContainer = document.getElementById('survivorListContainer');
+        const mvpGrid = document.getElementById('mvpGrid');
+
+        // 초기화
+        if (survivorContainer) survivorContainer.style.display = 'none';
+
+        if (data.winner === 'survivors') {
+            h1.innerText = "🎉 인류 승리 🎉";
+            h1.style.color = "#2ecc71";
+            h1.style.textShadow = "0 0 20px green";
+            h2.innerText = `총 ${data.survivorList ? data.survivorList.length : 0}명의 생존자가 탈출했습니다!`;
+
+            // 생존자 명단 표시
+            if (survivorContainer && data.survivorList) {
+                survivorContainer.style.display = 'block';
+                const listContent = document.getElementById('survivorListContent');
+                listContent.innerHTML = '';
+
+                data.survivorList.forEach(name => {
+                    const badge = document.createElement('div');
+                    badge.style.background = '#27ae60';
+                    badge.style.color = 'white';
+                    badge.style.padding = '5px 15px';
+                    badge.style.borderRadius = '20px';
+                    badge.style.fontWeight = 'bold';
+                    badge.style.fontSize = '1rem';
+                    badge.innerText = name;
+                    listContent.appendChild(badge);
+                });
+            }
+
+        } else {
+            // 좀비 승리
+            h1.innerText = "🧟 인류 멸망 🧟";
+            h1.style.color = "#e74c3c";
+            h1.style.textShadow = "0 0 20px red";
+            h2.innerText = "좀비가 승리했습니다!";
+        }
+
+        // 데이터 바인딩 (MVP)
+        const setText = (id, text) => {
+            const el = document.getElementById(id);
+            if (el) el.innerText = text;
+        };
+
+        if (data.survivor) {
+            setText('resSurvivor', data.survivor.name);
+            setText('resSurvivorVal', data.survivor.val);
+        } else {
+            setText('resSurvivor', '-');
+            setText('resSurvivorVal', '-');
+        }
+
+        if (data.runner) {
+            setText('resRunner', data.runner.name);
+            setText('resRunnerVal', data.runner.val);
+        }
+
+        setText('resHost', data.host);
+
+        if (data.infector) {
+            setText('resInfector', data.infector.name);
+            setText('resInfectorVal', data.infector.val);
+        } else {
+            setText('resInfector', '-');
+            setText('resInfectorVal', '-');
+        }
+
+        // 카운트다운 애니메이션
+        let timeLeft = 10;
+        const countSpan = document.getElementById('resetCountdown');
+        if (countSpan) countSpan.innerText = timeLeft;
+
+        const interval = setInterval(() => {
+            timeLeft--;
+            if (countSpan) countSpan.innerText = timeLeft;
+            if (timeLeft <= 0) {
+                clearInterval(interval);
+            }
+        }, 1000);
+    }
 });
 
 socket.on('connect', () => {
@@ -796,7 +926,10 @@ let isStunned = false; // [추가] 기절 상태
 
 function processInput(deltaTimeSec) {
     if (!isJoined || !players[socket.id]) return;
-    if (isStunned) return; // [추가] 기절 시 조작 불가
+
+    // [기절 체크] (태그 당함 OR 좀비 감염)
+    if (isStunned) return;
+    if (players[socket.id].stunnedUntil && Date.now() < players[socket.id].stunnedUntil) return;
 
     let dx = 0; let dy = 0;
 
