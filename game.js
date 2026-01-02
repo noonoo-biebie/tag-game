@@ -91,7 +91,7 @@ if (chatInput) {
                 else {
                     const matchedCmds = Object.keys(COMMAND_DATA).filter(cmd =>
                         cmd.startsWith(val)
-                    );
+                    ).sort();
                     tabMatches = matchedCmds;
                 }
 

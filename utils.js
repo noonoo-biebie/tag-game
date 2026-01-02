@@ -325,13 +325,61 @@ function generateOffice(rows, cols) {
     return map;
 }
 
-// [신규 Backrooms] Level 0 (Main Maze + Embedded Zones)
+// [신규 Backrooms] Level 0 (Mask-based Layout)
 function generateBackrooms(rows, cols) {
     const map = Array.from({ length: rows }, () => Array(cols).fill(1));
+    const zoneMap = Array.from({ length: rows }, () => Array(cols).fill('MAZE')); // 구역 마스킹
+    const zones = [];
 
-    // Core Maze Generator (Recursive Backtracker)
-    function createMaze(r1, c1, r2, c2, width) {
-        const step = width + 1; // 벽 1칸 포함한 이동 간격
+    // 1. 구역 배치 (Layout Zones)
+    // WIDE 구역의 비중을 높임
+    const possibleTypes = ['OPEN', 'PATTERN', 'WIDE_ROOM', 'WIDE_PATH', 'WIDE_ROOM'];
+    const zoneInfos = possibleTypes.sort(() => Math.random() - 0.5);
+
+    console.log(`[MapGen] Layout Plan: ${zoneInfos.join(', ')}`);
+
+    for (const type of zoneInfos) {
+        let minSize = 12;
+        if (type.includes('WIDE')) minSize = 18; // WIDE는 확실히 크게
+
+        const w = Math.floor(minSize + Math.random() * 8);
+        const h = Math.floor(minSize + Math.random() * 8);
+
+        let placed = false;
+        // 배치 시도
+        for (let k = 0; k < 20; k++) {
+            const r = Math.floor(Math.random() * (rows - h - 6)) + 3;
+            const c = Math.floor(Math.random() * (cols - w - 6)) + 3;
+
+            // 겹침 확인 (여유 2칸)
+            let overlap = false;
+            for (let rr = r - 2; rr <= r + h + 2; rr++) {
+                for (let cc = c - 2; cc <= c + w + 2; cc++) {
+                    if (rr >= 0 && rr < rows && cc >= 0 && cc < cols) {
+                        if (zoneMap[rr][cc] !== 'MAZE') overlap = true;
+                    }
+                }
+            }
+
+            if (!overlap) {
+                // 마킹
+                for (let rr = r; rr < r + h; rr++) {
+                    for (let cc = c; cc < c + w; cc++) {
+                        zoneMap[rr][cc] = type;
+                    }
+                }
+                zones.push({ r1: r, c1: c, r2: r + h - 1, c2: c + w - 1, type: type, w, h });
+                console.log(`[MapGen] Zone ${type} assigned at (${r},${c})`);
+                placed = true;
+                break;
+            }
+        }
+    }
+
+    // 2. 생성기 (Generators)
+    // 범용 미로 생성기 (zoneMap을 준수함)
+    function createMaze(r1, c1, r2, c2, width, targetType) {
+        const step = width + 1;
         const visited = new Set();
         const directions = [{ dr: -step, dc: 0 }, { dr: step, dc: 0 }, { dr: 0, dc: -step }, { dr: 0, dc: step }];
 
@@ -348,7 +396,6 @@ function generateBackrooms(rows, cols) {
             const minC = Math.min(ca, cb), maxC = Math.max(ca, cb);
             const rLimit = maxR + width - 1;
             const cLimit = maxC + width - 1;
-
             for (let r = minR; r <= rLimit; r++) {
                 for (let c = minC; c <= cLimit; c++) {
                     if (r >= r1 && r <= r2 && c >= c1 && c <= c2) map[r][c] = 0;
@@ -362,8 +409,10 @@ function generateBackrooms(rows, cols) {
             const dirs = [...directions].sort(() => Math.random() - 0.5);
             for (const { dr, dc } of dirs) {
                 const nr = r + dr, nc = c + dc;
-                if (nr >= r1 + 2 && nr <= r2 - width && nc >= c1 + 2 && nc <= c2 - width) {
-                    if (!visited.has(`${nr},${nc}`)) {
+                // 범위 체크 + [중요] 구역 타입 체크
+                if (nr >= r1 && nr <= r2 - width + 1 && nc >= c1 && nc <= c2 - width + 1) {
+                    // 다음 발판의 중심이 해당 구역인지 확인
+                    if (zoneMap[nr][nc] === targetType && !visited.has(`${nr},${nc}`)) {
                         connect(r, c, nr, nc);
                         dfs(nr, nc);
                     }
@@ -371,91 +420,177 @@ function generateBackrooms(rows, cols) {
             }
         }
 
-        // Start near center
-        dfs(r1 + 2, c1 + 2);
-
-        // Random Loops
-        for (let r = r1 + 1; r < r2 - 1; r++) {
-            for (let c = c1 + 1; c < c2 - 1; c++) {
-                if (map[r][c] === 1 && Math.random() < 0.1) {
-                    const openV = (map[r - 1][c] === 0 && map[r + 1][c] === 0);
-                    const openH = (map[r][c - 1] === 0 && map[r][c + 1] === 0);
-                    if (openV || openH) map[r][c] = 0;
-                }
-            }
-        }
-    }
-
-    // Zone Generators
-    const generators = {
-        MAZE: (r1, c1, r2, c2) => createMaze(r1, c1, r2, c2, 2), // Base: Narrow (2칸)
-        WIDE: (r1, c1, r2, c2) => createMaze(r1, c1, r2, c2, 3), // Zone: Wide (3칸)
-
-        OPEN: function (r1, c1, r2, c2) {
-            for (let r = r1; r <= r2; r++) {
-                for (let c = c1; c <= c2; c++) {
-                    if (r <= 0 || c <= 0 || r >= rows - 1 || c >= cols - 1) continue;
-                    map[r][c] = 0;
-                    if (Math.random() < 0.05) map[r][c] = 1;
-                }
-            }
-        },
-
-        PATTERN: function (r1, c1, r2, c2) {
-            const type = Math.random() < 0.5 ? 'GRID' : 'LINES';
-            for (let r = r1; r <= r2; r++) {
-                for (let c = c1; c <= c2; c++) {
-                    if (r <= 0 || c <= 0 || r >= rows - 1 || c >= cols - 1) continue;
-                    map[r][c] = 0;
-                    if (type === 'GRID') {
-                        if (r % 4 === 0 && c % 4 === 0) map[r][c] = 1;
-                    } else {
-                        if (c % 5 === 0 && r % 6 !== 0) map[r][c] = 1;
+        // 시작점 찾기 (해당 구역 내의 유효한 좌표 아무데나)
+        for (let r = r1; r <= r2; r += step) {
+            for (let c = c1; c <= c2; c += step) {
+                if (zoneMap[r][c] === targetType && !visited.has(`${r},${c}`)) {
+                    // 여유 공간 확인
+                    if (r + width <= rows && c + width <= cols) {
+                        dfs(r, c);
                     }
                 }
             }
         }
-    };
 
-    // 1. 기본 베이스: 전체 맵을 좁은 미로(Maze)로 채움
-    generators.MAZE(0, 0, rows - 1, cols - 1);
-
-    // 2. 서브 구역 (Open, Pattern, Wide) 삽입
-    const zones = [];
-    const zoneTypes = ['OPEN', 'PATTERN', 'WIDE'];
-
-    for (const type of zoneTypes) {
-        // 크기 제한: 12~20칸
-        const w = Math.floor(12 + Math.random() * 9);
-        const h = Math.floor(12 + Math.random() * 9);
-
-        for (let k = 0; k < 10; k++) {
-            const r = Math.floor(Math.random() * (rows - h - 6)) + 3;
-            const c = Math.floor(Math.random() * (cols - w - 6)) + 3;
-
-            let overlap = false;
-            for (const z of zones) {
-                if (r < z.r2 + 4 && r + h > z.r1 - 4 && c < z.c2 + 4 && c + w > z.c1 - 4) {
-                    overlap = true;
-                    break;
+        // Loop 생성 (Maze 퀄리티)
+        if (targetType === 'MAZE' || targetType === 'WIDE_PATH') {
+            for (let r = r1 + 1; r < r2 - 1; r++) {
+                for (let c = c1 + 1; c < c2 - 1; c++) {
+                    if (map[r][c] === 1 && zoneMap[r][c] === targetType && Math.random() < 0.1) {
+                        const openV = (map[r - 1][c] === 0 && map[r + 1][c] === 0);
+                        const openH = (map[r][c - 1] === 0 && map[r][c + 1] === 0);
+                        if (openV || openH) map[r][c] = 0;
+                    }
                 }
-            }
-
-            if (!overlap) {
-                const r2 = r + h;
-                const c2 = c + w;
-
-                generators[type](r, c, r2, c2);
-
-                // 테두리 연결
-                for (let cc = c + 2; cc < c2 - 2; cc += 3) { map[r][cc] = 0; map[r2][cc] = 0; }
-                for (let rr = r + 2; rr < r2 - 2; rr += 3) { map[rr][c] = 0; map[rr][c2] = 0; }
-
-                zones.push({ r1: r, c1: c, r2: r2, c2: c2, type: type });
-                break;
             }
         }
     }
+
+    // 각 구역 생성 실행
+    // A. Base MAZE (전체 순회하지만 zoneMap=='MAZE'인 곳만 팜)
+    createMaze(0, 0, rows - 1, cols - 1, 2, 'MAZE');
+
+    // B. Sub Zones
+    zones.forEach(z => {
+        if (z.type === 'WIDE_ROOM' || z.type === 'WIDE_PATH') {
+            createMaze(z.r1, z.c1, z.r2, z.c2, 3, z.type);
+        } else if (z.type === 'OPEN') {
+            for (let r = z.r1; r <= z.r2; r++) {
+                for (let c = z.c1; c <= z.c2; c++) {
+                    map[r][c] = 0;
+                    if (Math.random() < 0.05) map[r][c] = 1;
+                }
+            }
+        } else if (z.type === 'PATTERN') {
+            const pattern = Math.random() < 0.5 ? 'GRID' : 'LINES';
+            for (let r = z.r1; r <= z.r2; r++) {
+                for (let c = z.c1; c <= z.c2; c++) {
+                    map[r][c] = 0;
+                    if (pattern === 'GRID' && r % 4 === 0 && c % 4 === 0) map[r][c] = 1;
+                    if (pattern === 'LINES' && c % 5 === 0 && r % 6 !== 0) map[r][c] = 1;
+                }
+            }
+        }
+    });
+
+    // 3. 구역 연결 (Connections)
+    // 각 Zone의 테두리를 돌면서 인접한 MAZE와 연결
+    zones.forEach(z => {
+        const { r1, c1, r2, c2, type } = z;
+
+        // 연결 후보 지점 수집
+        const connections = [];
+
+        // 상하 테두리
+        for (let c = c1; c <= c2; c++) {
+            if (r1 > 0 && zoneMap[r1 - 1][c] === 'MAZE') connections.push({ r: r1, c: c, dr: -1, dc: 0 });
+            if (r2 < rows - 1 && zoneMap[r2 + 1][c] === 'MAZE') connections.push({ r: r2, c: c, dr: 1, dc: 0 });
+        }
+        // 좌우 테두리
+        for (let r = r1; r <= r2; r++) {
+            if (c1 > 0 && zoneMap[r][c1 - 1] === 'MAZE') connections.push({ r: r, c: c1, dr: 0, dc: -1 });
+            if (c2 < cols - 1 && zoneMap[r][c2 + 1] === 'MAZE') connections.push({ r: r, c: c2, dr: 0, dc: 1 });
+        }
+
+        // 연결 개수 결정
+        let numLinks = 4; // 기본
+        if (type === 'WIDE_ROOM') numLinks = 6; // 방은 입구 많게
+        if (type === 'WIDE_PATH') numLinks = 12; // 패스는 자연스럽게 많이 연결
+        if (type === 'OPEN') numLinks = 8;
+
+        // 랜덤 선택 및 뚫기
+        connections.sort(() => Math.random() - 0.5);
+        for (let i = 0; i < Math.min(numLinks, connections.length); i++) {
+            const { r, c, dr, dc } = connections[i];
+
+            // 경계벽 허물기 (2칸 너비로 넉넉하게)
+            map[r][c] = 0;
+            map[r + dr][c + dc] = 0; // MAZE 쪽 벽
+
+            // 2칸 두께 (직교 방향으로 한 칸 더)
+            if (dr !== 0) { // 상하 연결이면 좌우로 확장
+                if (c + 1 <= c2) { map[r][c + 1] = 0; map[r + dr][c + dc + 1] = 0; }
+            } else { // 좌우 연결이면 상하로 확장
+                if (r + 1 <= r2) { map[r + 1][c] = 0; map[r + dr + 1][c + dc] = 0; }
+            }
+        }
+    });
+
+    // 4. [후처리] 고립 지역 제거 및 강제 연결 (Islands Cleanup)
+    function cleanupMap() {
+        const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
+        const regions = [];
+
+        // Flood Fill로 연결된 구역 찾기
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                if (map[r][c] === 0 && !visited[r][c]) {
+                    const region = [];
+                    const queue = [{ r, c }];
+                    visited[r][c] = true;
+                    region.push({ r, c });
+
+                    let head = 0;
+                    while (head < queue.length) {
+                        const { r: cr, c: cc } = queue[head++];
+                        const dirs = [{ dr: 1, dc: 0 }, { dr: -1, dc: 0 }, { dr: 0, dc: 1 }, { dr: 0, dc: -1 }];
+                        for (const { dr, dc } of dirs) {
+                            const nr = cr + dr, nc = cc + dc;
+                            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && map[nr][nc] === 0 && !visited[nr][nc]) {
+                                visited[nr][nc] = true;
+                                region.push({ r: nr, c: nc });
+                                queue.push({ r: nr, c: nc });
+                            }
+                        }
+                    }
+                    regions.push(region);
+                }
+            }
+        }
+
+        // 크기순 정렬 (가장 큰 구역이 메인)
+        regions.sort((a, b) => b.length - a.length);
+
+        if (regions.length > 1) {
+            const mainRegion = regions[0];
+
+            console.log(`[MapGen] Cleanup: Found ${regions.length} regions. Main size: ${mainRegion.length}`);
+
+            for (let i = 1; i < regions.length; i++) {
+                const region = regions[i];
+
+                // 20칸 미만의 작은 구멍은 메워버림 (제거)
+                if (region.length < 20) {
+                    for (const { r, c } of region) {
+                        map[r][c] = 1;
+                    }
+                } else {
+                    // 큰 구역이 끊겨 있다면 메인 구역과 직선으로 뚫어 연결 (응급 복구)
+                    console.log(`[MapGen] Connecting isolated region of size ${region.length}`);
+                    const p1 = region[Math.floor(region.length / 2)];
+                    const p2 = mainRegion[Math.floor(mainRegion.length / 2)];
+
+                    let cr = p1.r, cc = p1.c;
+                    // p1 -> p2 직선 파기
+                    while (cr !== p2.r || cc !== p2.c) {
+                        map[cr][cc] = 0;
+                        // 대각선 이동보다는 하나씩
+                        if (cr < p2.r) cr++;
+                        else if (cr > p2.r) cr--;
+                        else if (cc < p2.c) cc++;
+                        else if (cc > p2.c) cc--;
+
+                        // 통로 너비 확보
+                        if (cr + 1 < rows) map[cr + 1][cc] = 0;
+                        if (cc + 1 < cols) map[cr][cc + 1] = 0;
+                    }
+                    map[p2.r][p2.c] = 0;
+                }
+            }
+        }
+    }
+
+    cleanupMap();
 
     return map;
 }
