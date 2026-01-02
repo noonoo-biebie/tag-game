@@ -30,13 +30,19 @@ let roundTimer = null;
 // [통계 변수 추가]
 let gameStartTime = 0;
 let initialHostId = null;
+let zombieSpawnTimer = null; // [버그 수정] 좀비 스폰 타이머 전역 관리
 
 // --- 아이템 시스템 ---
 let items = {};
 let itemNextId = 1;
 
 function spawnItem() {
-    if (Object.keys(items).length >= 5) {
+    // [수정] 맵 크기에 따른 아이템 최대 개수 (동적 제한)
+    const mapSize = currentMapData.length * currentMapData[0].length;
+    // 타일 300개당 1개, 최소 5개, 최대 50개
+    const maxItems = Math.min(50, Math.max(5, Math.floor(mapSize / 300)));
+
+    if (Object.keys(items).length >= maxItems) {
         // 가장 오래된 아이템 삭제
         const oldestId = Object.keys(items).sort((a, b) => a - b)[0];
         delete items[oldestId];
@@ -86,6 +92,10 @@ function handleItemEffect(playerId, itemType) {
 function checkItemCollection(playerId) {
     const player = players[playerId];
     if (!player) return;
+    if (player.isZombie) return; // 좀비는 아이템 획득 불가
+
+    // [수정] 이미 아이템이 있어도 새로운 아이템 획득 가능 (교체)
+    // if (player.hasItem) return; // 기존 로직 제거
 
     for (const itemId in items) {
         const item = items[itemId];
@@ -94,15 +104,14 @@ function checkItemCollection(playerId) {
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < 30) {
-            if (player.hasItem) return;
-
-            // 쉴드 해제 (상반되는 효과? 게임 규칙)
+            // [버그 수정] 실드 사용 중 아이템 획득 시 실드 해제
             if (player.hasShield) {
                 player.hasShield = false;
                 io.to(playerId).emit('itemEffect', { type: 'shield', on: false });
                 io.emit('gameMessage', `[${player.nickname}] 님의 방어막이 새 아이템 획득으로 사라졌습니다.`);
             }
 
+            // 기존 아이템이 있다면 덮어쓰기됨
             player.hasItem = item.type;
             delete items[itemId];
 
@@ -228,6 +237,9 @@ function checkCollision(moverId) {
             }
         }
     } else if (gameMode === 'ZOMBIE') {
+        // [수정] 기절한 상태라면 감염 활동 불가 (연쇄 감염 방지)
+        if (mover.stunnedUntil && Date.now() < mover.stunnedUntil) return;
+
         const zombieColors = ['#2ecc71', '#27ae60', '#00b894', '#55efc4', '#16a085'];
 
         // 좀비 모드 충돌 판정 (쌍방향 체크)
@@ -249,6 +261,9 @@ function checkCollision(moverId) {
                 }
 
                 if (zombie && human) {
+                    // [버그 수정] 좀비가 기절(쿨타임) 상태면 감염시키지 않음 (연쇄 감염 방지)
+                    if (zombie.stunnedUntil && Date.now() < zombie.stunnedUntil) continue;
+
                     // 1. 쉴드 체크
                     if (human.hasShield) {
                         human.hasShield = false;
@@ -447,9 +462,12 @@ function startZombieCountdown() {
     io.emit('gameMessage', countdownMsg(timeLeft));
     io.emit('chatMessage', { nickname: 'System', message: countdownMsg(timeLeft), playerId: 'system' });
 
-    const countdownInterval = setInterval(() => {
+    io.emit('chatMessage', { nickname: 'System', message: countdownMsg(timeLeft), playerId: 'system' });
+
+    if (zombieSpawnTimer) clearInterval(zombieSpawnTimer);
+    zombieSpawnTimer = setInterval(() => {
         if (gameMode !== 'ZOMBIE') {
-            clearInterval(countdownInterval);
+            clearInterval(zombieSpawnTimer);
             return;
         }
 
@@ -457,7 +475,7 @@ function startZombieCountdown() {
         if (timeLeft > 0) {
             io.emit('gameMessage', countdownMsg(timeLeft));
         } else {
-            clearInterval(countdownInterval);
+            clearInterval(zombieSpawnTimer);
 
             // 감염 시작
             const ids = Object.keys(players);
@@ -501,6 +519,11 @@ function startZombieCountdown() {
 
 function resetGame() {
     if (roundTimer) clearInterval(roundTimer);
+    // [버그 수정] 진행 중인 좀비 카운트다운 취소
+    if (zombieSpawnTimer) {
+        clearInterval(zombieSpawnTimer);
+        zombieSpawnTimer = null;
+    }
     roundTime = 0;
     io.emit('updateTimer', 0);
     items = {};
@@ -632,12 +655,27 @@ function handleJoinGame(socket, data) {
     console.log('게임 입장:', data.nickname);
 
     const spawnPos = getRandomSpawn(currentMapData);
+    let initialColor = data.color || '#e74c3c';
+    let isZombieStart = false;
+
+    // [난입 로직] 게임 중 난입 시 역할 자동 할당
+    if (gameMode === 'ZOMBIE') {
+        // 좀비 모드에서 난입하면 좀비로 시작
+        isZombieStart = true;
+        const zombieColors = ['#2ecc71', '#27ae60', '#00b894', '#55efc4', '#16a085'];
+        initialColor = zombieColors[Math.floor(Math.random() * zombieColors.length)];
+    } else {
+        // 태그 모드에서 난입하면 생존자(혹은 술래 없음 상태)
+        isZombieStart = false;
+    }
+
     players[socket.id] = {
         x: spawnPos.x,
         y: spawnPos.y,
         playerId: socket.id,
-        color: data.color || '#e74c3c',
+        color: initialColor,
         nickname: data.nickname || '익명',
+        isZombie: isZombieStart, // [추가] 초기 좀비 상태
         stats: { distance: 0, infectionCount: 0, survivalTime: 0 } // [통계] 초기화
     };
 
@@ -684,29 +722,7 @@ function handlePlayerMove(socket, movementData) {
 }
 
 // [추가] 아이템 획득 체크
-function checkItemCollection(playerId) {
-    const player = players[playerId];
-    if (!player) return;
-    if (player.isZombie) return; // 좀비는 아이템 획득 불가
-
-    if (player.hasItem) return; // 이미 아이템 보유 중
-
-    for (const itemId in items) {
-        const item = items[itemId];
-        const dist = Math.hypot(player.x - item.x, player.y - item.y);
-
-        // 아이템 획득 반경 (30px)
-        if (dist < 30) {
-            player.hasItem = item.type;
-            delete items[itemId];
-
-            io.emit('updateItems', items);
-            io.to(playerId).emit('updateInventory', item.type);
-            io.emit('gameMessage', `[${player.nickname}] 님이 ${item.type} 획득!`);
-            break;
-        }
-    }
-}
+// [삭제됨: 중복 정의된 checkItemCollection 제거]
 
 
 
@@ -946,11 +962,18 @@ function handleChatMessage(socket, msg) {
     });
 }
 
-// 15초마다 아이템 스폰
+// [수정] 아이템 자동 관리 루프 (5초마다)
 setInterval(() => {
-    spawnItem();
-    io.emit('gameMessage', `🎁 선물 상자가 나타났습니다!`);
-}, 15000);
+    // 맵 크기 기반 목표 개수
+    const mapSize = currentMapData.length * currentMapData[0].length;
+    const maxItems = Math.min(50, Math.max(5, Math.floor(mapSize / 300)));
+
+    // 부족하면 스폰
+    if (Object.keys(items).length < maxItems) {
+        spawnItem();
+        // io.emit('gameMessage', `🎁 선물 상자가 나타났습니다!`); // 너무 자주 뜨면 시끄러우니 제거 or 조건부
+    }
+}, 5000);
 
 // 초기 아이템 및 테스트 바나나
 setTimeout(() => {

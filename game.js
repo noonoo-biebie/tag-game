@@ -24,13 +24,14 @@ const chatMessages = document.getElementById('chat-messages');
 const COMMAND_DATA = {
     '/reset': { desc: '🔄 게임 리셋', args: [] },
     '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag'] },
-    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'OPEN', 'BACKROOMS', 'MAZE_BIG'] },
+    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'OPEN', 'ZOMBIE', 'OFFICE', 'BACKROOMS', 'MAZE_BIG'] },
     '/bot': { desc: '🤖 봇 소환', args: [] },
     '/kickbot': { desc: '👋 봇 전체 추방', args: [] },
     '/help': { desc: '❓ 도움말', args: [] },
     '/fog': { desc: '🌫️ 시야 토글', args: [] },
     '/item': { desc: '⚡ 치트 아이템', args: ['speed', 'banana', 'shield'] },
-    '/minimap': { desc: '🗺️ 미니맵 보기', args: [] }
+    '/minimap': { desc: '🗺️ 미니맵 보기', args: [] },
+    '/reveal': { desc: '👁️ 전체 플레이어 보기 (치트)', args: [] }
 };
 
 // 가이드 UI 생성
@@ -125,19 +126,44 @@ if (chatInput) {
     });
 
     // 4. [추가] 채팅 전송 및 로컬 명령어 (미니맵)
-    chatInput.addEventListener('keypress', (e) => {
+    chatInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
+            if (e.isComposing) return; // IME 중복 입력 방지
+
             const val = chatInput.value.trim();
             if (val) {
-                if (val === '/minimap') {
+                const lowerVal = val.toLowerCase();
+
+                if (lowerVal === '/minimap') {
                     toggleMinimap();
                     chatInput.value = '';
                     guideBox.style.display = 'none';
+                    chatInput.blur(); // [복구] 포커스 해제
+                    return;
+                }
+                // [Cheat] Reveal Map
+                if (lowerVal === '/reveal') {
+                    showAllPlayersOnMinimap = !showAllPlayersOnMinimap;
+                    const status = showAllPlayersOnMinimap ? 'ON 🟢' : 'OFF 🔴';
+                    const div = document.createElement('div');
+                    div.innerHTML = `<span style="color:#f1c40f; font-weight:bold;">[MapHack]</span> 전체 보기: ${status} <span style="color:#aaa; font-size:11px;">(🟢좀비 🔵생존자 🟡나 🔴술래)</span>`;
+                    chatMessages.appendChild(div);
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                    chatInput.value = '';
+                    guideBox.style.display = 'none';
+
+                    // [UX 개선] 켰는데 미니맵이 안 보이면 자동으로 켜주기
+                    const overlay = document.getElementById('minimap-overlay');
+                    if (showAllPlayersOnMinimap && overlay && overlay.style.display === 'none') {
+                        toggleMinimap();
+                    }
+                    chatInput.blur(); // [복구] 포커스 해제
                     return;
                 }
                 socket.emit('chatMessage', val);
                 chatInput.value = '';
                 guideBox.style.display = 'none';
+                chatInput.blur(); // [복구] 포커스 해제
             }
         }
     });
@@ -214,6 +240,8 @@ let gameTime = 0; // [추가] 남은 시간
 let traps = {};
 let isSlipped = false;
 let slipVelocity = { x: 0, y: 0 };
+let showAllPlayersOnMinimap = false; // [Minimap Cheat]
+let minimapLoop = null; // [Minimap Loop]
 
 // 피드백 UI 로직
 const feedbackBtn = document.getElementById('feedback-btn');
@@ -1355,11 +1383,28 @@ function drawHUD() {
 // [추가] 미니맵 기능 구현
 function toggleMinimap() {
     const overlay = document.getElementById('minimap-overlay');
-    if (overlay && overlay.style.display === 'none') {
-        overlay.style.display = 'block';
+
+    if (overlay) {
+        if (overlay.style.display === 'none') {
+            overlay.style.display = 'block';
+            // Start Loop
+            if (!minimapLoop) {
+                renderMinimapLoop();
+            }
+        } else {
+            overlay.style.display = 'none';
+            // Stop Loop (cancelRAF would be better, but simple check is enough)
+        }
+    }
+}
+
+function renderMinimapLoop() {
+    const overlay = document.getElementById('minimap-overlay');
+    if (overlay && overlay.style.display !== 'none') {
         drawMinimap();
-    } else if (overlay) {
-        overlay.style.display = 'none';
+        minimapLoop = requestAnimationFrame(renderMinimapLoop);
+    } else {
+        minimapLoop = null;
     }
 }
 
@@ -1390,18 +1435,38 @@ function drawMinimap() {
         }
     }
 
-    // 플레이어 그리기 (나: 빨강)
-    if (players[socket.id]) {
-        const me = players[socket.id];
-        ctx.fillStyle = '#e74c3c';
-        const mmX = (me.x / 32) * cellSize;
-        const mmY = (me.y / 32) * cellSize;
+    // 플레이어 그리기
+    Object.values(players).forEach(p => {
+        // [Cheat] Reveal All Or Show Me
+        // 본인은 항상 보임.
+        // Cheat가 켜져있으면 모두 보임.
+        if (p.playerId !== socket.id && !showAllPlayersOnMinimap) return;
+
+        let color = '#fff';
+
+        // [User Request Colors]
+        if (p.playerId === socket.id) {
+            color = '#f1c40f'; // 나: 노란색
+        } else if (taggerId === p.playerId) {
+            color = '#e74c3c'; // 술래: 빨간색
+        } else if (p.isZombie) {
+            color = '#2ecc71'; // 좀비: 초록색
+        } else {
+            color = '#3498db'; // 생존자: 파란색
+        }
+
+        ctx.fillStyle = color;
+        const mmX = (p.x / 32) * cellSize;
+        const mmY = (p.y / 32) * cellSize;
+        const radius = cellSize / 2;
 
         ctx.beginPath();
-        ctx.arc(mmX, mmY, cellSize * 0.8, 0, Math.PI * 2);
+        ctx.arc(mmX + radius, mmY + radius, radius, 0, Math.PI * 2);
         ctx.fill();
-    }
+    });
 }
+
+
 
 // ESC 키로 미니맵/가이드 닫기
 window.addEventListener('keydown', (e) => {
