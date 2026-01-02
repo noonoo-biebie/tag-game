@@ -24,12 +24,13 @@ const chatMessages = document.getElementById('chat-messages');
 const COMMAND_DATA = {
     '/reset': { desc: '🔄 게임 리셋', args: [] },
     '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag'] },
-    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'OPEN', 'BACKROOMS'] },
+    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'OPEN', 'BACKROOMS', 'MAZE_BIG'] },
     '/bot': { desc: '🤖 봇 소환', args: [] },
     '/kickbot': { desc: '👋 봇 전체 추방', args: [] },
     '/help': { desc: '❓ 도움말', args: [] },
     '/fog': { desc: '🌫️ 시야 토글', args: [] },
-    '/item': { desc: '⚡ 치트 아이템', args: ['speed', 'banana', 'shield'] }
+    '/item': { desc: '⚡ 치트 아이템', args: ['speed', 'banana', 'shield'] },
+    '/minimap': { desc: '🗺️ 미니맵 보기', args: [] }
 };
 
 // 가이드 UI 생성
@@ -122,6 +123,24 @@ if (chatInput) {
     chatInput.addEventListener('focus', () => {
         updateCommandGuide(chatInput.value);
     });
+
+    // 4. [추가] 채팅 전송 및 로컬 명령어 (미니맵)
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            const val = chatInput.value.trim();
+            if (val) {
+                if (val === '/minimap') {
+                    toggleMinimap();
+                    chatInput.value = '';
+                    guideBox.style.display = 'none';
+                    return;
+                }
+                socket.emit('chatMessage', val);
+                chatInput.value = '';
+                guideBox.style.display = 'none';
+            }
+        }
+    });
 }
 
 function updateCommandGuide(inputValue) {
@@ -183,7 +202,8 @@ let players = {};
 let items = {};
 let myItem = null;
 let taggerId = null;
-let gameMode = 'TAG'; // [추가]
+let gameMode = 'TAG';
+let currentMapData = null; // [추가] 맵 데이터 저장용
 
 // 속도 관련 변수
 const BASE_SPEED = 240;
@@ -362,11 +382,15 @@ socket.on('gameMode', (mode) => {
 });
 
 socket.on('mapUpdate', (newMapData) => {
-    map = newMapData;
+    currentMapData = newMapData;
+    map = newMapData; // [복구] 메인 렌더링 변수 동기화
+
+    if (!currentMapData || !currentMapData.length) return;
 
     // 맵 크기에 따른 줌 레벨 자동 조정
-    const mapW = map[0].length * TILE_SIZE;
-    const mapH = map.length * TILE_SIZE;
+    const TILE_SIZE = 32;
+    const mapW = currentMapData[0].length * TILE_SIZE;
+    const mapH = currentMapData.length * TILE_SIZE;
 
     const scaleX = canvas.width / mapW;
     const scaleY = canvas.height / mapH;
@@ -1194,3 +1218,74 @@ function drawHUD() {
     const timeStr = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
     ctx.fillText(`⏱️ 시간: ${timeStr}`, textX, textY + 60);
 }
+
+// [추가] 미니맵 기능 구현
+function toggleMinimap() {
+    const overlay = document.getElementById('minimap-overlay');
+    if (overlay && overlay.style.display === 'none') {
+        overlay.style.display = 'block';
+        drawMinimap();
+    } else if (overlay) {
+        overlay.style.display = 'none';
+    }
+}
+
+function drawMinimap() {
+    const canvas = document.getElementById('minimap-canvas');
+    if (!canvas || !currentMapData) return;
+
+    // 맵 데이터 크기에 맞춰 캔버스 크기 조정
+    const ctx = canvas.getContext('2d');
+    const mapRows = currentMapData.length;
+    const mapCols = currentMapData[0].length;
+
+    // 캔버스 최대 크기 600px 내에서 비율 유지
+    const cellSize = Math.min(600 / mapCols, 600 / mapRows);
+
+    canvas.width = mapCols * cellSize;
+    canvas.height = mapRows * cellSize;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 벽 그리기
+    ctx.fillStyle = '#444';
+    for (let r = 0; r < mapRows; r++) {
+        for (let c = 0; c < mapCols; c++) {
+            if (currentMapData[r][c] === 1) {
+                ctx.fillRect(c * cellSize, r * cellSize, cellSize, cellSize);
+            }
+        }
+    }
+
+    // 플레이어 그리기 (나: 빨강)
+    if (players[socket.id]) {
+        const me = players[socket.id];
+        ctx.fillStyle = '#e74c3c';
+        const mmX = (me.x / 32) * cellSize;
+        const mmY = (me.y / 32) * cellSize;
+
+        ctx.beginPath();
+        ctx.arc(mmX, mmY, cellSize * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+// ESC 키로 미니맵/가이드 닫기
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const mm = document.getElementById('minimap-overlay');
+        const gm = document.getElementById('guide-modal');
+        if (mm) mm.style.display = 'none';
+        if (gm) gm.style.display = 'none';
+    }
+});
+
+// [추가] 'M' 키로 미니맵 토글
+window.addEventListener('keydown', (e) => {
+    // 채팅 입력 중이 아닐 때만 동작
+    if (document.activeElement === chatInput) return;
+
+    if (e.key === 'm' || e.key === 'M') {
+        toggleMinimap();
+    }
+});

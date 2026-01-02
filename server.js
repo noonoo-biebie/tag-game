@@ -8,8 +8,8 @@ const io = new Server(server);
 // const fs = require('fs'); // 피드백 파일 저장 제거됨
 
 // [모듈 임포트]
-const { ROWS, COLS, TILE_SIZE, ITEM_TYPES, MAPS } = require('./config');
-const { getRandomSpawn, checkBotWallCollision } = require('./utils');
+const { TILE_SIZE, MAPS, BOT_PERSONALITIES, ITEM_TYPES } = require('./config');
+const { getRandomSpawn, checkBotWallCollision, checkLineOfSight, findPath, generateBackrooms, generateMazeBig, generateOffice } = require('./utils');
 const Bot = require('./bot');
 
 app.use(express.static(__dirname));
@@ -397,6 +397,21 @@ function resetGame() {
     io.emit('updateItems', items);
     io.emit('updateTraps', traps);
 
+    // [추가] 랜덤 맵인 경우 리셋 시 구조 재생성
+    if (currentMapName === 'BACKROOMS') {
+        try {
+            console.log('[Reset] Backrooms 재생성...');
+            currentMapData = generateBackrooms(60, 60);
+            io.emit('mapUpdate', currentMapData);
+        } catch (e) { console.error(e); }
+    } else if (currentMapName === 'OFFICE') {
+        currentMapData = generateOffice(60, 60);
+        io.emit('mapUpdate', currentMapData);
+    } else if (currentMapName === 'MAZE_BIG') {
+        currentMapData = generateMazeBig(60, 60);
+        io.emit('mapUpdate', currentMapData);
+    }
+
     // 플레이어/봇 재배치
     for (const id in players) {
         const p = players[id];
@@ -689,22 +704,54 @@ function handleChatMessage(socket, msg) {
 
     // 맵 변경 커맨드
     if (cmd.startsWith('/map')) {
-        const mapName = cmd.split(' ')[1];
-        if (mapName && MAPS[mapName.toUpperCase()]) {
-            currentMapName = mapName.toUpperCase();
-            currentMapData = MAPS[currentMapName];
+        const inputName = cmd.split(' ')[1];
+        if (inputName) {
+            const mapKey = inputName.toUpperCase();
+            let isRandom = false;
+
+            if (mapKey === 'BACKROOMS') {
+                console.log('[MapGen] Backrooms(Level 0) 생성 시작...');
+                try {
+                    const newMap = generateBackrooms(60, 60);
+                    if (!newMap || !newMap.length) throw new Error("맵 생성 실패 (결과 없음)");
+                    currentMapName = 'BACKROOMS';
+                    currentMapData = newMap;
+                    isRandom = true;
+                    console.log(`[MapGen] 생성 완료: ${currentMapData.length}x${currentMapData[0].length}`);
+                } catch (e) {
+                    console.error('[MapGen] Error:', e);
+                    socket.emit('chatMessage', { nickname: 'System', message: `맵 생성 오류: ${e.message}`, playerId: 'system' });
+                    return;
+                }
+            } else if (mapKey === 'OFFICE') {
+                console.log('[MapGen] Office 생성 시작...');
+                currentMapName = 'OFFICE';
+                currentMapData = generateOffice(60, 60);
+                isRandom = true;
+            } else if (mapKey === 'MAZE_BIG') {
+                currentMapName = 'MAZE_BIG';
+                currentMapData = generateMazeBig(60, 60); // 기존 거대 미로
+                isRandom = true;
+            } else if (MAPS[mapKey]) {
+                currentMapName = mapKey;
+                currentMapData = MAPS[currentMapName];
+            } else {
+                const availMaps = Object.keys(MAPS).join(', ');
+                const errMsg = `존재하지 않는 맵입니다. 사용 가능: ${availMaps}`;
+                socket.emit('chatMessage', { nickname: 'System', message: errMsg, playerId: 'system' });
+                return;
+            }
 
             // 모든 플레이어/봇 재배치 및 리셋
-            resetGame(); // resetGame 내에서 getRandomSpawn(currentMapData) 사용됨
+            resetGame();
 
             io.emit('mapUpdate', currentMapData);
-            const mapMsg = `🗺️ 맵이 [${currentMapName}]으로 변경되었습니다!`;
+
+            let mapMsg = `🗺️ 맵이 [${currentMapName}]으로 변경되었습니다!`;
+            if (isRandom) mapMsg += " (♻️ 랜덤 구조 생성)";
+
             io.emit('gameMessage', mapMsg);
             io.emit('chatMessage', { nickname: 'System', message: mapMsg, playerId: 'system' });
-        } else {
-            const availMaps = Object.keys(MAPS).join(', ');
-            const errMsg = `존재하지 않는 맵입니다. 사용 가능: ${availMaps}`;
-            socket.emit('chatMessage', { nickname: 'System', message: errMsg, playerId: 'system' });
         }
         return;
     }
