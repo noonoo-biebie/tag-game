@@ -80,39 +80,13 @@ class Bot {
         return candidates[Math.floor(Math.random() * candidates.length)];
     }
 
-    // 메인 업데이트 루프
+    // 메인 업데이트 루프 (Refactored)
     update(players, taggerId, lastTaggerId, callbacks, mapData, gameMode = 'TAG') {
         // [0] 기절 상태 체크
         if (this.stunnedUntil && Date.now() < this.stunnedUntil) return;
 
         // 1. 미끄러짐 처리
-        if (this.isSlipped) {
-            if (Date.now() - this.slipStartTime > 10000) {
-                this.isSlipped = false;
-                return;
-            }
-
-            const slipSpeed = 25;
-            let nextX = this.x + this.slipDir.x * slipSpeed;
-            let nextY = this.y + this.slipDir.y * slipSpeed;
-
-            // 맵 경계 체크
-            if (nextX < 0) nextX = 0; else if (nextX > (COLS - 1) * TILE_SIZE) nextX = (COLS - 1) * TILE_SIZE;
-            if (nextY < 0) nextY = 0; else if (nextY > (ROWS - 1) * TILE_SIZE) nextY = (ROWS - 1) * TILE_SIZE;
-
-            if (checkBotWallCollision(nextX, nextY, mapData)) {
-                this.isSlipped = false;
-            } else {
-                const distMoved = Math.hypot(this.x - nextX, this.y - nextY);
-                if (distMoved < 0.1) {
-                    this.isSlipped = false;
-                } else {
-                    this.x = nextX;
-                    this.y = nextY;
-                }
-            }
-            return;
-        }
+        if (this.handleSlip(mapData)) return;
 
         // 2. 끼임 감지 (0.5초마다)
         if (Date.now() - this.lastCheckTime > 500) {
@@ -122,7 +96,53 @@ class Bot {
             this.lastCheckTime = Date.now();
         }
 
-        // 3. AI 로직
+        // 3. 환경 스캔 (타겟 및 시야)
+        const env = this.scanEnvironment(players, taggerId, lastTaggerId, mapData, gameMode);
+
+        // 4. 행동 결정 (추격자 vs 도망자)
+        if (env.isChaser) {
+            this.processChaserBehavior(env.target, env.canSee, mapData);
+        } else {
+            this.processSurvivorBehavior(env.target, env.canSee, mapData);
+        }
+
+        // 5. 아이템 사용
+        this.useItemLogic(callbacks.handleItemEffect);
+    }
+
+    // [Helper] 미끄러짐 처리
+    handleSlip(mapData) {
+        if (!this.isSlipped) return false;
+
+        if (Date.now() - this.slipStartTime > 10000) {
+            this.isSlipped = false;
+            return false;
+        }
+
+        const slipSpeed = 25;
+        let nextX = this.x + this.slipDir.x * slipSpeed;
+        let nextY = this.y + this.slipDir.y * slipSpeed;
+
+        // 맵 경계 체크
+        if (nextX < 0) nextX = 0; else if (nextX > (COLS - 1) * TILE_SIZE) nextX = (COLS - 1) * TILE_SIZE;
+        if (nextY < 0) nextY = 0; else if (nextY > (ROWS - 1) * TILE_SIZE) nextY = (ROWS - 1) * TILE_SIZE;
+
+        if (checkBotWallCollision(nextX, nextY, mapData)) {
+            this.isSlipped = false;
+        } else {
+            const distMoved = Math.hypot(this.x - nextX, this.y - nextY);
+            if (distMoved < 0.1) {
+                this.isSlipped = false;
+            } else {
+                this.x = nextX;
+                this.y = nextY;
+            }
+        }
+        return true; // 미끄러지는 중임
+    }
+
+    // [Helper] 환경 스캔
+    scanEnvironment(players, taggerId, lastTaggerId, mapData, gameMode) {
         let isChaser = false;
         if (gameMode === 'ZOMBIE') {
             isChaser = this.isZombie;
@@ -133,13 +153,12 @@ class Bot {
         let target = null;
         let canSee = false;
 
-        // 1. 타겟(적 또는 먹잇감) 탐색
         if (isChaser) {
-            // 추격자: 보이는 가장 가까운 대상을 찾음
+            // 추격자: 보이는 가장 가까운 타겟 검색
             target = this.findBestTarget(players, lastTaggerId, mapData, gameMode);
             if (target) canSee = true;
         } else {
-            // 도망자: 가장 가까운 위협 요소를 찾음 (시야 체크 전)
+            // 도망자: 가장 가까운 위협 검색
             let distToThreat = Infinity;
             if (gameMode === 'ZOMBIE') {
                 for (const pid in players) {
@@ -148,7 +167,7 @@ class Bot {
                         const d = Math.hypot(players[pid].x - this.x, players[pid].y - this.y);
                         if (d < distToThreat) {
                             distToThreat = d;
-                            target = players[pid]; // 잠정적 타겟
+                            target = players[pid];
                         }
                     }
                 }
@@ -159,7 +178,7 @@ class Bot {
                 }
             }
 
-            // 도망자 시야 체크 (250px)
+            // 시야 체크 (250px)
             if (target && distToThreat < 250) {
                 if (checkLineOfSight(this.x + 16, this.y + 16, target.x + 16, target.y + 16, mapData)) {
                     canSee = true;
@@ -167,88 +186,102 @@ class Bot {
             }
         }
 
-        // 2. 행동 결정
-        if (canSee) {
-            if (isChaser) {
-                // [추격자] 발견 -> 추격 및 위치 기억
-                this.patrolTarget = null;
-                this.chaseMemory = { x: target.x, y: target.y };
-                const angle = Math.atan2(target.y - this.y, target.x - this.x);
-                this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-                this.moveToDir(mapData);
-            } else {
-                // [도망자] 발견 -> 공포 및 도주
-                this.fearTimer = Date.now() + 2500;
-                this.lastFleeAngle = Math.atan2(this.y - target.y, this.x - target.x);
-                this.moveDir = { x: Math.cos(this.lastFleeAngle), y: Math.sin(this.lastFleeAngle) };
+        return { isChaser, target, canSee };
+    }
 
-                // 패닉 무빙
-                if (this.isStuck) {
-                    const panicAngle = Math.random() * Math.PI * 2;
-                    this.moveDir = { x: Math.cos(panicAngle), y: Math.sin(panicAngle) };
-                    this.lastFleeAngle = panicAngle;
+    // [Helper] 추격자 행동 로직
+    processChaserBehavior(target, canSee, mapData) {
+        if (canSee) {
+            // 1. 발견: 추격 및 위치 기억
+            this.patrolTarget = null;
+            this.chaseMemory = { x: target.x, y: target.y };
+
+            // 끼임 방지 (무한 대치 해결)
+            if (this.resolveStuck(mapData)) return;
+
+            const angle = Math.atan2(target.y - this.y, target.x - this.x);
+            this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+            this.moveToDir(mapData);
+        } else if (this.chaseMemory) {
+            // 2. 미발견 + 기억 있음: 기억 장소로 이동
+            if (this.resolveStuck(mapData)) return;
+
+            const dx = this.chaseMemory.x - this.x;
+            const dy = this.chaseMemory.y - this.y;
+
+            if (Math.hypot(dx, dy) < 32) {
+                // 도착 후 수색 (2초)
+                if (!this.searchTimer) this.searchTimer = Date.now() + 2000;
+
+                if (Date.now() < this.searchTimer) {
+                    if (Math.random() < 0.1) {
+                        const searchAngle = Math.random() * Math.PI * 2;
+                        this.moveDir = { x: Math.cos(searchAngle), y: Math.sin(searchAngle) };
+                    }
+                    this.moveToDir(mapData);
+                } else {
+                    // 수색 종료 -> 순찰
+                    this.chaseMemory = null;
+                    this.searchTimer = 0;
+                    this.doPatrol(mapData);
                 }
+            } else {
+                // 기억 장소로 계속 이동
+                const angle = Math.atan2(dy, dx);
+                this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
                 this.moveToDir(mapData);
             }
         } else {
-            // 안 보일 때 (기억 또는 공포 의존)
-            if (isChaser && this.chaseMemory) {
-                // [추격자] 기억된 위치로 이동
-                if (this.isStuck) {
-                    // 벽 막힘 탈출
-                    if (!this.wiggleTimer || Date.now() - this.wiggleTimer > 300) {
-                        const wiggleAngle = Math.random() * Math.PI * 2;
-                        this.moveDir = { x: Math.cos(wiggleAngle), y: Math.sin(wiggleAngle) };
-                        this.wiggleTimer = Date.now();
-                    }
-                    this.moveToDir(mapData);
-                    return;
-                }
-
-                const dx = this.chaseMemory.x - this.x;
-                const dy = this.chaseMemory.y - this.y;
-
-                if (Math.hypot(dx, dy) < 32) {
-                    // 도착 후 수색
-                    if (!this.searchTimer) this.searchTimer = Date.now() + 2000;
-
-                    if (Date.now() < this.searchTimer) {
-                        if (Math.random() < 0.1) {
-                            const searchAngle = Math.random() * Math.PI * 2;
-                            this.moveDir = { x: Math.cos(searchAngle), y: Math.sin(searchAngle) };
-                        }
-                        this.moveToDir(mapData);
-                        return;
-                    } else {
-                        // 수색 종료
-                        this.chaseMemory = null;
-                        this.searchTimer = 0;
-                        this.doPatrol(mapData);
-                    }
-                } else {
-                    const angle = Math.atan2(dy, dx);
-                    this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
-                    this.moveToDir(mapData);
-                }
-            } else if (!isChaser && Date.now() < this.fearTimer) {
-                // [도망자] 공포 상태 유지 (계속 도망)
-                this.isFleeing = true;
-                this.moveDir = { x: Math.cos(this.lastFleeAngle), y: Math.sin(this.lastFleeAngle) };
-                if (this.isStuck) {
-                    const panicAngle = Math.random() * Math.PI * 2;
-                    this.moveDir = { x: Math.cos(panicAngle), y: Math.sin(panicAngle) };
-                    this.lastFleeAngle = panicAngle;
-                }
-                this.moveToDir(mapData);
-            } else {
-                // [공통] 평소 상태 -> 순찰
-                this.isFleeing = false;
-                this.doPatrol(mapData);
-            }
+            // 3. 평소: 순찰
+            this.doPatrol(mapData);
         }
+    }
 
+    // [Helper] 도망자 행동 로직
+    processSurvivorBehavior(target, canSee, mapData) {
+        if (canSee) {
+            // 1. 발견: 공포 모드 ON & 도망
+            this.fearTimer = Date.now() + 2500;
+            this.lastFleeAngle = Math.atan2(this.y - target.y, this.x - target.x);
+            this.moveDir = { x: Math.cos(this.lastFleeAngle), y: Math.sin(this.lastFleeAngle) };
 
-        this.useItemLogic(callbacks.handleItemEffect);
+            // 패닉 무빙 (끼임 시)
+            if (this.isStuck) {
+                const panicAngle = Math.random() * Math.PI * 2;
+                this.moveDir = { x: Math.cos(panicAngle), y: Math.sin(panicAngle) };
+                this.lastFleeAngle = panicAngle;
+            }
+            this.moveToDir(mapData);
+        } else if (Date.now() < this.fearTimer) {
+            // 2. 공포 지속: 계속 도망
+            this.isFleeing = true;
+            this.moveDir = { x: Math.cos(this.lastFleeAngle), y: Math.sin(this.lastFleeAngle) };
+
+            if (this.isStuck) {
+                const panicAngle = Math.random() * Math.PI * 2;
+                this.moveDir = { x: Math.cos(panicAngle), y: Math.sin(panicAngle) };
+                this.lastFleeAngle = panicAngle;
+            }
+            this.moveToDir(mapData);
+        } else {
+            // 3. 평소: 순찰
+            this.isFleeing = false;
+            this.doPatrol(mapData);
+        }
+    }
+
+    // [Helper] 끼임 해결 (Wiggle) - true 리턴 시 이미 이동함
+    resolveStuck(mapData) {
+        if (this.isStuck) {
+            if (!this.wiggleTimer || Date.now() - this.wiggleTimer > 300) {
+                const wiggleAngle = Math.random() * Math.PI * 2;
+                this.moveDir = { x: Math.cos(wiggleAngle), y: Math.sin(wiggleAngle) };
+                this.wiggleTimer = Date.now();
+            }
+            this.moveToDir(mapData);
+            return true;
+        }
+        return false;
     }
 
     doPatrol(mapData) {

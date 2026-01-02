@@ -4,8 +4,7 @@ const http = require('http');
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 const io = new Server(server);
-// const fs = require('fs'); // 피드백 파일 저장 제거됨
-// const fs = require('fs'); // 피드백 파일 저장 제거됨
+
 
 // [모듈 임포트]
 const { TILE_SIZE, MAPS, BOT_PERSONALITIES, ITEM_TYPES } = require('./config');
@@ -95,7 +94,6 @@ function checkItemCollection(playerId) {
     if (player.isZombie) return; // 좀비는 아이템 획득 불가
 
     // [수정] 이미 아이템이 있어도 새로운 아이템 획득 가능 (교체)
-    // if (player.hasItem) return; // 기존 로직 제거
 
     for (const itemId in items) {
         const item = items[itemId];
@@ -643,11 +641,7 @@ function handleAnnounceAction(socket, action) {
     io.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
 }
 
-// function handleFeedback(socket, msg) { ... } // 제거됨
 
-// function handleFeedback(socket, msg) { ... } // 제거됨
-
-// function handleFeedback(socket, msg) { ... } // 제거됨
 
 function handleJoinGame(socket, data) {
     if (players[socket.id]) return;
