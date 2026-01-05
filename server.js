@@ -36,6 +36,12 @@ let gameStartTime = 0;
 let initialHostId = null;
 let zombieSpawnTimer = null; // [버그 수정] 좀비 스폰 타이머 전역 관리
 
+// [BOMB MODE Variables]
+let bombHolderId = null;
+let bombEndTime = 0;
+let bombPassCooldown = 0; // 폭탄 전달 후 쿨타임 (핑퐁 방지)
+let bombDurationOverride = null; // [User Config] 폭탄 타이머 고정 값 (초)
+
 // --- 아이템 시스템 ---
 let items = {};
 let itemNextId = 1;
@@ -97,6 +103,7 @@ function checkItemCollection(playerId) {
     const player = players[playerId];
     if (!player) return;
     if (player.isZombie) return; // 좀비는 아이템 획득 불가
+    if (player.isSpectator) return; // [추가] 관전자 아이템 획득 불가
 
     // [수정] 이미 아이템이 있어도 새로운 아이템 획득 가능 (교체)
 
@@ -133,6 +140,7 @@ function checkTrapCollision(playerId) {
     try {
         const player = players[playerId];
         if (!player) return;
+        if (player.isSpectator) return; // [추가] 관전자 트랩 무시
 
         // 트랩 없으면 리턴
         if (Object.keys(traps).length === 0) return;
@@ -195,6 +203,9 @@ function checkCollision(moverId) {
     const mover = players[moverId];
     if (!mover) return;
 
+    // 관전자는 충돌 무시
+    if (mover.isSpectator) return;
+
     // 모드별 로직 분기
     if (gameMode === 'TAG') {
         if (!taggerId) return;
@@ -250,8 +261,13 @@ function checkCollision(moverId) {
             if (targetId === moverId) continue;
             const target = players[targetId];
 
+            // [추가] 관전자 상호작용 완전 차단 (나 또는 상대방이 관전자면 패스)
+            if (mover.isSpectator || target.isSpectator) continue;
+
             const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
-            if (dist < 30) {
+            const collisionDist = (gameMode === 'ZOMBIE') ? 30 : 32;
+
+            if (dist < collisionDist) {
                 let zombie = null;
                 let human = null;
 
@@ -313,10 +329,70 @@ function checkCollision(moverId) {
                     io.emit('gameMessage', `🧟 [${human.nickname}] 님이 좀비에게 감염되었습니다!`);
 
                     const zombieId = (zombie === mover) ? moverId : targetId;
-                    io.emit('zombieInfect', { targetId: humanId, attackerId: zombieId });
+                }
+            }
+        }
+    } else if (gameMode === 'BOMB') {
+        const bombColors = ['#e74c3c', '#d35400', '#c0392b'];
 
-                    checkZombieWin();
-                    break;
+        for (const targetId in players) {
+            if (targetId === moverId) continue;
+            const target = players[targetId];
+
+            // 관전자, 기절 상태, 좀비(?) 등 제외
+            if (target.isSpectator) continue;
+            if (target.stunnedUntil && Date.now() < target.stunnedUntil) continue;
+            if (mover.stunnedUntil && Date.now() < mover.stunnedUntil) continue;
+
+            const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
+            if (dist < 40) { // [수정] 판정 범위 30 -> 40
+                // 폭탄 전달 로직
+                // 폭탄 전달 로직
+                // 조건: 둘 중 하나가 폭탄을 가지고 있고, 쿨타임이 지났어야 함
+                if (Date.now() < bombPassCooldown) continue;
+
+                let sender = null;
+                let receiver = null;
+
+                if (moverId === bombHolderId) { sender = mover; receiver = target; }
+                else if (targetId === bombHolderId) { sender = target; receiver = mover; }
+
+                if (sender && receiver) {
+                    // [추가] 실드 체크 (폭탄 방어)
+                    if (receiver.hasShield) {
+                        receiver.hasShield = false;
+                        io.to(receiver.playerId).emit('itemEffect', { type: 'shield', on: false });
+                        io.emit('gameMessage', `🛡️ [${receiver.nickname}] 님이 방어막으로 폭탄을 막았습니다!`);
+
+                        // 공격자(폭탄 홀더) 1초 기절 (페널티)
+                        sender.stunnedUntil = Date.now() + 1000;
+                        bombPassCooldown = Date.now() + 1000; // 쿨타임도 적용하여 연타 방지
+                        return;
+                    }
+
+                    // 전달!
+                    bombHolderId = receiver.playerId;
+                    bombPassCooldown = Date.now() + 1000; // 1초 쿨타임
+
+                    // [추가] 폭탄 받은 사람은 2초간 기절 (도망칠 시간 부여)
+                    receiver.stunnedUntil = Date.now() + 2000;
+
+                    // 시각 효과
+                    io.emit('gameMessage', `💣 [${sender.nickname}] -> [${receiver.nickname}] 폭탄 전달! (2초 기절)`);
+
+                    // [버그 수정] 상태 변경(기절)을 즉시 클라이언트에 알림
+                    io.emit('playerMoved', receiver);
+                    io.emit('playerMoved', sender);
+                    // [버그 수정] 상태 변경(기절)을 즉시 클라이언트에 알림
+                    io.emit('playerMoved', receiver);
+                    io.emit('playerMoved', sender);
+                    io.emit('updateTagger', bombHolderId); // 폭탄 소유자 변경 알림
+
+                    // [추가] 폭탄 전달 이벤트 (클라이언트 시각 효과용: 화면 흔들림, 소리 등)
+                    io.emit('bombPassed', { senderId: sender.playerId, receiverId: receiver.playerId });
+
+                    io.emit('updateTagger', bombHolderId); // 클라이언트에서 이펙트 처리 (taggerId 재활용)
+                    return; // 한 명하고만 상호작용
                 }
             }
         }
@@ -549,6 +625,13 @@ function resetGame() {
         io.emit('mapUpdate', currentMapData);
     }
 
+    // [BOMB] 초기화
+    bombHolderId = null;
+    bombEndTime = 0;
+    bombPassCooldown = 0;
+    bombEliminationOrder = []; // [추가] 탈락자 기록 초기화
+    bombPassCooldown = 0;
+
     // [수정] 봇 초기화 (완전 재소환)
     // 좀비 상태나 이름이 꼬이는 문제를 방지하기 위해 기존 봇을 모두 삭제하고 새로 생성
     let botCount = 0;
@@ -583,6 +666,18 @@ function resetGame() {
             p.nickname = p.nickname.replace('🧟 ', '');
         }
 
+        // [BOMB] 관전 모드 해제 (단, 수동 관전자는 제외)
+        if (!p.isManualSpectator) {
+            p.isSpectator = false;
+            // [수정] 색상 복구 (폭탄 모드 탈락 등에서 변한 색상 원복)
+            // originalColor가 없으면 initialColor, 그것도 없으면 기본값
+            if (p.originalColor) p.color = p.originalColor;
+            else if (p.initialColor) p.color = p.initialColor;
+            else p.color = '#e74c3c'; // Fallback
+        } else {
+            p.color = 'rgba(255, 255, 255, 0.3)'; // 관전자 색상 유지
+        }
+
         // [통계] 초기화
         p.stats = { distance: 0, infectionCount: 0, survivalTime: 0 };
 
@@ -612,6 +707,9 @@ function resetGame() {
         taggerId = null; // 좀비 모드는 술래 개념 대신 좀비가 있음
         io.emit('updateTagger', null);
         startZombieCountdown();
+    } else if (gameMode === 'BOMB') {
+        taggerId = null;
+        startBombRound();
     }
 
     io.emit('currentPlayers', players);
@@ -626,6 +724,8 @@ function resetGame() {
 io.on('connection', (socket) => {
     console.log('클라이언트 접속:', socket.id);
     setupSocketEvents(socket);
+    // [추가] 접속 시 현재 플레이어 수 전달
+    socket.emit('playerCountUpdate', Object.keys(players).length);
 });
 
 function setupSocketEvents(socket) {
@@ -655,14 +755,23 @@ function handleJoinGame(socket, data) {
 
     const spawnPos = getRandomSpawn(currentMapData);
     let initialColor = data.color || '#e74c3c';
+    const realOriginalColor = initialColor; // [버그 수정] 난입 시 색상 변조 전 원본 저장
     let isZombieStart = false;
 
     // [난입 로직] 게임 중 난입 시 역할 자동 할당
+    let isSpectator = false; // [추가] 관전자 플래그
+    let joinMsg = null;
+
     if (gameMode === 'ZOMBIE') {
         // 좀비 모드에서 난입하면 좀비로 시작
         isZombieStart = true;
         const zombieColors = ['#2ecc71', '#27ae60', '#00b894', '#55efc4', '#16a085'];
         initialColor = zombieColors[Math.floor(Math.random() * zombieColors.length)];
+    } else if (gameMode === 'BOMB' && bombEndTime > 0) {
+        // [폭탄 모드] 진행 중 난입 시 관전자
+        isSpectator = true;
+        initialColor = 'rgba(255, 255, 255, 0.3)';
+        joinMsg = "💣 폭탄 모드 진행 중이라 관전자로 입장합니다.";
     } else {
         // 태그 모드에서 난입하면 생존자(혹은 술래 없음 상태)
         isZombieStart = false;
@@ -673,12 +782,20 @@ function handleJoinGame(socket, data) {
         y: spawnPos.y,
         playerId: socket.id,
         color: initialColor,
+        initialColor: initialColor, // 현재 상태의 초기 색상
+        originalColor: realOriginalColor, // [버그 수정] 리셋 시 복구할 진짜 색상
         nickname: data.nickname || '익명',
-        isZombie: isZombieStart, // [추가] 초기 좀비 상태
-        stats: { distance: 0, infectionCount: 0, survivalTime: 0 } // [통계] 초기화
+        isZombie: isZombieStart,
+        isSpectator: isSpectator, // [추가]
+        stats: { distance: 0, infectionCount: 0, survivalTime: 0 }
     };
 
-    if (!taggerId) {
+    if (joinMsg) {
+        socket.emit('gameMessage', joinMsg);
+        socket.emit('chatMessage', { nickname: 'System', message: joinMsg, playerId: 'system' });
+    }
+
+    if (!taggerId && !isSpectator) { // 관전자는 술래 아님
         taggerId = socket.id;
         io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 첫 술래입니다!`);
     } else {
@@ -694,6 +811,8 @@ function handleJoinGame(socket, data) {
     socket.emit('updateTagger', taggerId);
 
     socket.broadcast.emit('newPlayer', players[socket.id]);
+    // [추가] 접속자 수 갱신 브로드캐스트
+    io.emit('playerCountUpdate', Object.keys(players).length);
 }
 
 function handlePlayerMove(socket, movementData) {
@@ -728,7 +847,8 @@ function handlePlayerMove(socket, movementData) {
 function handleUseItem(socket) {
     const player = players[socket.id];
     if (!player) return;
-    if (player.isZombie) return; // [추가] 좀비는 아이템 사용 불가
+    if (player.isZombie) return;
+    if (player.isSpectator) return; // [추가] 관전자 사용 불가
 
     if (player.hasItem) {
         const itemType = player.hasItem;
@@ -745,6 +865,8 @@ function handleDisconnect(socket) {
         delete players[socket.id];
         io.emit('disconnectPlayer', socket.id);
         io.emit('gameMessage', `[${leftNickname}] 님이 나갔습니다.`);
+        // [추가] 접속자 수 갱신 브로드캐스트
+        io.emit('playerCountUpdate', Object.keys(players).length);
 
         if (socket.id === taggerId) {
             const remainingIds = Object.keys(players);
@@ -765,11 +887,30 @@ function handleChatMessage(socket, msg) {
     const player = players[socket.id];
     const cmd = msg.trim();
 
-    if (cmd === '/bot' || cmd === '/addbot') {
-        createBot();
-        const infoMsg = `[${player.nickname}] 님이 봇을 소환했습니다! 🤖`;
+    if (cmd.startsWith('/bot') || cmd.startsWith('/addbot')) {
+        const parts = cmd.split(' ');
+        let count = 1;
+        if (parts.length > 1) {
+            count = parseInt(parts[1]);
+            if (isNaN(count) || count < 1) count = 1;
+            if (count > 50) count = 50; // Max 50
+        }
+
+        let spawnedCount = 0;
+        for (let i = 0; i < count; i++) {
+            // createBot 함수가 있다면 사용, 아니면 인라인
+            // 안전하게 인라인으로 구현 (ID 충돌 방지)
+            const botId = 'bot_' + Date.now() + '_' + Math.floor(Math.random() * 10000) + '_' + i;
+            const bot = new Bot(botId, currentMapData);
+            players[bot.id] = bot;
+            spawnedCount++;
+        }
+
+        const infoMsg = `[System] 봇 ${spawnedCount}마리를 소환했습니다! 🤖`;
         io.emit('gameMessage', infoMsg);
         io.emit('chatMessage', { nickname: 'System', message: infoMsg, playerId: 'system' });
+        // 접속자 수 갱신
+        io.emit('playerCountUpdate', Object.keys(players).length);
         return;
     }
 
@@ -855,6 +996,33 @@ function handleChatMessage(socket, msg) {
 
 
 
+        } else if (mode === 'bomb') {
+            // [추가] 인원 체크 (혼자서는 폭탄 모드 실행 불가 - 버그 방지)
+            if (Object.keys(players).length < 2) {
+                socket.emit('chatMessage', {
+                    nickname: 'System',
+                    message: "🚫 혼자서는 폭탄 모드를 플레이할 수 없습니다! /bot 명령어로 봇을 추가해주세요.",
+                    playerId: 'system'
+                });
+                return;
+            }
+
+            gameMode = 'BOMB';
+
+            // (Pending grep search result)] 타이머 설정 (숫자 입력 시)
+            if (parts[2]) {
+                const duration = parseInt(parts[2]);
+                if (!isNaN(duration) && duration > 0) {
+                    bombDurationOverride = duration;
+                    const msg = `⚙️ 폭탄 타이머가 ${duration}초로 설정되었습니다.`;
+                    io.emit('gameMessage', msg);
+                    io.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
+                }
+            } else {
+                bombDurationOverride = null; // 초기화 (기본값 사용)
+            }
+
+            resetGame();
         } else if (mode === 'tag') {
             gameMode = 'TAG';
             resetGame();
@@ -924,11 +1092,55 @@ function handleChatMessage(socket, msg) {
             '🤖 <b>/bot</b> : 봇 소환<br>' +
             '👋 <b>/kickbot</b> : 봇 추방<br>' +
             '🔄 <b>/reset</b> : 맵 초기화<br>' +
+            '👻 <b>/spec</b> : 관전 모드 토글 (테스트용)<br>' +
             '🎁 <b>/item [이름]</b> : 아이템 획득 (banana, speed, shield)<br>' +
             '🗺️ <b>/map [이름]</b> : 맵 변경<br>' +
             '👁️ <b>/fog</b> : 시야 제한 해제 (치트)';
 
         socket.emit('chatMessage', { nickname: 'System', message: helpMsg, playerId: 'system' });
+        return;
+    }
+
+    // [추가] 관전 모드 토글 (/spec)
+    if (cmd === '/spec' || cmd === '/spectator') {
+        player.isManualSpectator = !player.isManualSpectator;
+        player.isSpectator = player.isManualSpectator;
+
+        if (player.isSpectator) {
+            // 관전 진입
+            player.color = 'rgba(255, 255, 255, 0.3)';
+            player.hasItem = null;
+            player.hasShield = false;
+
+            // 만약 술래였다면 권한 이양
+            if (taggerId === socket.id || bombHolderId === socket.id) {
+                const remaining = Object.keys(players).filter(id => id !== socket.id && !players[id].isSpectator);
+                let nextId = null;
+                if (remaining.length > 0) {
+                    nextId = remaining[Math.floor(Math.random() * remaining.length)];
+                }
+
+                if (gameMode === 'BOMB' && bombHolderId === socket.id) {
+                    bombHolderId = nextId;
+                    io.emit('updateTagger', bombHolderId);
+                } else if (taggerId === socket.id) {
+                    taggerId = nextId;
+                    io.emit('updateTagger', taggerId);
+                    if (nextId) io.emit('gameMessage', `술래가 관전 모드로 전환하여 [${players[nextId].nickname}] 님이 술래가 됩니다.`);
+                }
+            }
+
+            io.emit('gameMessage', `👻 [${player.nickname}] 님이 관전 모드로 전환했습니다.`);
+        } else {
+            // 관전 해제 (복귀)
+            player.color = player.initialColor || '#e74c3c';
+            player.isZombie = false; // 기본 인간으로 복귀
+            if (player.nickname.startsWith('🧟 ')) player.nickname = player.nickname.replace('🧟 ', '');
+
+            io.emit('gameMessage', `🙂 [${player.nickname}] 님이 게임에 복귀했습니다.`);
+        }
+
+        io.emit('playerMoved', player);
         return;
     }
 
@@ -986,8 +1198,10 @@ setInterval(() => {
     Object.keys(players).forEach(id => {
         if (players[id] instanceof Bot) {
             // [중요] 봇에게 게임 state와 callback 전달
-            // gameMode 추가 전달
-            players[id].update(players, taggerId, lastTaggerId, {
+            // gameMode 추가 전달 (BOMB 모드면 bombHolderId를 술래로 취급)
+            const currentTaggerId = (gameMode === 'BOMB') ? bombHolderId : taggerId;
+
+            players[id].update(players, currentTaggerId, lastTaggerId, {
                 handleItemEffect: handleItemEffect
             }, currentMapData, gameMode);
 
@@ -998,7 +1212,140 @@ setInterval(() => {
             checkTrapCollision(id);
         }
     });
+
+    // [BOMB] 게임 루프
+    if (gameMode === 'BOMB') {
+        updateBombGame();
+    }
 }, 100);
+
+// [BOMB MODE Functions]
+let bombEliminationOrder = []; // [추가] 탈락 순서 기록 (Silver, Bronze 결정용)
+
+function startBombRound() {
+    const ids = Object.keys(players);
+    // 생존자만 필터링
+    const survivors = ids.filter(id => !players[id].isSpectator);
+
+    if (survivors.length <= 1) {
+        // 게임 종료 (1명 남음)
+        // updateBombGame에서 승리 처리하므로 여기선 패스하거나 리셋
+        return;
+    }
+
+    // 새 폭탄 라운드 시작
+    // 5초 대기 후 시작 (긴장감 및 거리 확보)
+    // 5초 대기 후 시작 (긴장감 및 거리 확보)
+    io.emit('gameMessage', `⏳ 5초 뒤 폭탄이 감지됩니다! 흩어지세요!`);
+
+    // [버그 수정] 시작 시 이전 폭탄 잔상 제거 (혹시 모를 초기화)
+    bombHolderId = null;
+    io.emit('updateTagger', null);
+
+    setTimeout(() => {
+        // 다시 확인
+        const currentSurvivors = Object.keys(players).filter(id => !players[id].isSpectator);
+        if (currentSurvivors.length <= 1) return;
+
+        const holderId = currentSurvivors[Math.floor(Math.random() * currentSurvivors.length)];
+        bombHolderId = holderId;
+
+        // 타이머: 설정값 or 30~40초 랜덤 (기본값 상향)
+        let duration = 0;
+        if (bombDurationOverride) {
+            duration = bombDurationOverride;
+        } else {
+            duration = Math.floor(Math.random() * 11) + 20; // 20 ~ 30
+        }
+
+        bombEndTime = Date.now() + (duration * 1000);
+        bombPassCooldown = 0;
+
+        io.emit('updateTagger', bombHolderId); // 홀더 표시 (빨간 테두리)
+
+        // 메시지 차별화
+        if (bombDurationOverride) {
+            io.emit('gameMessage', `💣 [${players[holderId].nickname}] 폭탄 점화! (설정값: ${duration}초)`);
+            io.emit('chatMessage', { nickname: 'System', message: `💣 폭탄 시작! (${duration}초 고정)`, playerId: 'system' });
+        } else {
+            io.emit('gameMessage', `💣 [${players[holderId].nickname}] 폭탄 점화! (20~30초 랜덤)`);
+            io.emit('chatMessage', { nickname: 'System', message: `💣 폭탄 시작! (???초)`, playerId: 'system' });
+        }
+
+        // 타이머 정보를 클라에 보낼 수도 있지만 "숨김"이 컨셉.
+        // 대신 째깍거리는 소리나 비주얼 큐는 나중에 game.js에서 처리.
+        io.emit('bombStart', { duration: duration, startTime: Date.now() }); // 클라에서 붉은 효과용
+    }, 3000);
+}
+
+function updateBombGame() {
+    if (!bombHolderId) return; // 라운드 진행 중 아님
+    if (bombEndTime === 0) return;
+
+    // console.log(`[BombDebug] Holder: ${players[bombHolderId]?.nickname}, TimeLeft: ${(bombEndTime - Date.now())/1000}s`);
+
+    // 1. 폭발 체크
+    if (Date.now() >= bombEndTime) {
+        // BOOM!
+        const loser = players[bombHolderId];
+        if (loser) {
+            loser.isSpectator = true;
+            loser.hasShield = false;
+            loser.color = 'rgba(255,255,255,0.3)'; // 반투명 (게임 로직상 처리 필요, 여기선 값만)
+
+
+            io.emit('playerMoved', loser); // 상태 전파
+            io.emit('gameMessage', `💥 콰쾅! [${loser.nickname}] 탈락!`);
+            io.emit('bombExploded', { loserId: bombHolderId }); // 클라 효과 (폭발 파티클)
+
+            // [추가] 탈락자 명단 기록 (나중에 2,3등 표시용)
+            bombEliminationOrder.push(loser);
+
+            bombHolderId = null;
+            bombEndTime = 0;
+
+            // 남은 생존자 확인
+            const survivors = Object.keys(players).filter(id => !players[id].isSpectator);
+
+            if (survivors.length === 1) {
+                // 우승!
+                // 우승!
+                const winner = players[survivors[0]];
+                io.emit('gameMessage', `🏆 [${winner.nickname}] 최종 우승! 축하합니다!`);
+
+                // [수정] 폭탄 모드 전용 결과 데이터 전송
+                // 1위: winner
+                // 2위: 마지막 탈락자
+                // 3위: 그 전 탈락자
+                const silver = bombEliminationOrder[bombEliminationOrder.length - 1];
+                const bronze = bombEliminationOrder[bombEliminationOrder.length - 2];
+
+                const resultData = {
+                    type: 'BOMB', // 클라이언트 분기용
+                    ranks: [
+                        winner.nickname,
+                        silver ? silver.nickname : '-',
+                        bronze ? bronze.nickname : '-'
+                    ]
+                };
+                io.emit('gameResult', resultData);
+                setTimeout(() => resetGame(), 10000);
+            } else if (survivors.length === 0) {
+                // 모두 멸망? (동시 폭사 등)
+                io.emit('gameMessage', `💀 생존자가 없습니다... 게임 오버.`);
+                setTimeout(() => resetGame(), 5000);
+            } else {
+                // 다음 라운드 진행
+                io.emit('gameMessage', `생존자 ${survivors.length}명 남았습니다. 다음 라운드 준비...`);
+                startBombRound();
+            }
+        } else {
+            // 홀더가 나갔거나 삭제됨
+            bombHolderId = null;
+            startBombRound(); // 재시작
+        }
+    }
+}
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

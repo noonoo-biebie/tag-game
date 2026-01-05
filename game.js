@@ -23,9 +23,10 @@ const chatMessages = document.getElementById('chat-messages');
 // [추가] 고급 명령어 자동완성 및 가이드
 const COMMAND_DATA = {
     '/reset': { desc: '🔄 게임 리셋', args: [] },
-    '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag'] },
+    '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag', 'bomb'] },
     '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'OPEN', 'ZOMBIE', 'OFFICE', 'BACKROOMS', 'MAZE_BIG'] },
-    '/bot': { desc: '🤖 봇 소환', args: [] },
+    '/bot': { desc: '🤖 봇 소환 [숫자]', args: [] },
+    '/spec': { desc: '👻 관전 모드 토글', args: [] },
     '/kickbot': { desc: '👋 봇 전체 추방', args: [] },
     '/help': { desc: '❓ 도움말', args: [] },
     '/fog': { desc: '🌫️ 시야 토글', args: [] },
@@ -160,6 +161,29 @@ if (chatInput) {
                     chatInput.blur(); // [복구] 포커스 해제
                     return;
                 }
+
+                // [개발자 치트] 그림자 토글 (/fog)
+                if (lowerVal === '/fog') {
+                    showShadows = !showShadows;
+                    console.log('Fog toggled:', showShadows);
+                    const status = showShadows ? 'ON' : 'OFF';
+
+                    // 로컬 메시지
+                    const div = document.createElement('div');
+                    div.innerHTML = `<span style="color:#e74c3c; font-weight:bold;">System:</span> 전장의 안개 ${status}`;
+                    chatMessages.appendChild(div);
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                    // [추가] 전체 알림
+                    const actionMsg = showShadows ? '어둠시야를 다시 켰습니다.' : '어둠시야를 밝혔습니다! (Hellfire Mode)';
+                    socket.emit('announceAction', actionMsg);
+
+                    chatInput.value = '';
+                    guideBox.style.display = 'none';
+                    chatInput.blur();
+                    return;
+                }
+
                 socket.emit('chatMessage', val);
                 chatInput.value = '';
                 guideBox.style.display = 'none';
@@ -228,13 +252,19 @@ let players = {};
 let items = {};
 let myItem = null;
 let taggerId = null;
-let gameMode = 'TAG';
+let gameMode = 'TAG'; // [게임 모드] TAG, ZOMBIE, BOMB
 let currentMapData = null; // [추가] 맵 데이터 저장용
+
+// [Visual FX] 화면 흔들림
+let shakeIntensity = 0;
+let shakeDecay = 0.9;
 
 // 속도 관련 변수
 const BASE_SPEED = 240;
 let speedMultiplier = 1.0;
 let gameTime = 0; // [추가] 남은 시간
+let bombStartTime = 0;   // [Bomb] 시작 시간
+let bombTotalDuration = 0; // [Bomb] 전체 시간
 
 // 트랩 및 상태 변수
 let traps = {};
@@ -296,39 +326,17 @@ startBtn.addEventListener('click', () => {
     socket.emit('joinGame', { nickname: nickname, color: colorInput.value });
 });
 
-chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        const msg = chatInput.value.trim();
-        if (msg) {
-            // [개발자 치트] 그림자 토글
-            if (msg === '/fog') {
-                showShadows = !showShadows;
-                const status = showShadows ? 'ON' : 'OFF';
+// (Deleted duplicate keydown listener)
 
-                // 로컬 메시지
-                const div = document.createElement('div');
-                div.innerHTML = `<span style="color:#e74c3c; font-weight:bold;">System:</span> 전장의 안개 ${status}`;
-                chatMessages.appendChild(div);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-
-                // [추가] 전체 알림
-                const actionMsg = showShadows ? '어둠시야를 다시 켰습니다.' : '어둠시야를 밝혔습니다! (Hellfire Mode)';
-                socket.emit('announceAction', actionMsg);
-
-                chatInput.value = '';
-                return;
-            }
-
-            socket.emit('chatMessage', msg);
-            chatInput.value = '';
-            chatInput.blur(); // 채팅 입력 후 포커스 해제 (즉시 이동 가능)
-        }
-    }
+socket.on('playerCountUpdate', (playerCount) => {
+    // 로그인 화면 업데이트
+    const countDisplay = document.getElementById('connection-count');
+    if (countDisplay) countDisplay.innerText = `현재 접속자: ${playerCount}명`;
 });
 
 socket.on('joinSuccess', (myInfo) => {
     isJoined = true;
-    loginScreen.style.display = 'none';
+    loginScreen.style.display = 'none'; // Hide login screen on join success
     gameContainer.style.display = 'block';
     document.body.focus();
 
@@ -343,9 +351,19 @@ socket.on('joinSuccess', (myInfo) => {
             .then(res => res.text())
             .then(text => {
                 if (text === 'pong') {
-                    // [Debug] 채팅창에 확인 메시지 출력
+                    // [Keep-Alive] 랜덤 메시지 (맛있는 멘트)
+                    const pingMsgs = [
+                        "📡 [System] 본부와 통신 연결 양호...",
+                        "⚡ [System] 벙커 전력 공급 안정적.",
+                        "🧟 [System] 좀비들이 아직 서버를 눈치채지 못했습니다.",
+                        "💓 [System] 메인 코어 심박수 정상 (두근두근)",
+                        "🛰️ [System] 위성 좌표 동기화 완료.",
+                        "🥔 [System] 서버 감자에 물을 주었습니다."
+                    ];
+                    const msg = pingMsgs[Math.floor(Math.random() * pingMsgs.length)];
+
                     const div = document.createElement('div');
-                    div.innerHTML = `<span style="color:#7f8c8d; font-size:11px;">[System] 서버 생존 신호 전송 완료 (Pong!)</span>`;
+                    div.innerHTML = `<span style="color:#7f8c8d; font-size:11px;">${msg}</span>`;
                     chatMessages.appendChild(div);
                     chatMessages.scrollTop = chatMessages.scrollHeight;
                 }
@@ -375,6 +393,11 @@ socket.on('updateTagger', (id) => {
     taggerId = id;
 });
 
+socket.on('gameMode', (mode) => {
+    gameMode = mode;
+    console.log(`[GameMode] 수신: ${mode}`);
+});
+
 socket.on('playerMoved', (playerInfo) => {
     // [수정] 본인이어도 중요 상태(좀비, 색상 등)는 동기화
     if (playerInfo.playerId === socket.id) {
@@ -389,6 +412,9 @@ socket.on('playerMoved', (playerInfo) => {
 
             // [기절 동기화]
             players[socket.id].stunnedUntil = playerInfo.stunnedUntil;
+
+            // [관전 모드 동기화]
+            players[socket.id].isSpectator = playerInfo.isSpectator;
         }
         return; // 위치 업데이트는 클라이언트 예측 이동 우선
     }
@@ -405,7 +431,9 @@ socket.on('playerMoved', (playerInfo) => {
         // 시각 효과 동기화 추가
         players[playerInfo.playerId].hasShield = playerInfo.hasShield;
         players[playerInfo.playerId].isSpeeding = playerInfo.isSpeeding;
-        players[playerInfo.playerId].isZombie = playerInfo.isZombie; // [추가] 좀비 상태 동기화
+        players[playerInfo.playerId].isSpeeding = playerInfo.isSpeeding;
+        players[playerInfo.playerId].isZombie = playerInfo.isZombie;
+        players[playerInfo.playerId].isSpectator = playerInfo.isSpectator; // [추가] 관전 상태 동기화
     }
 });
 
@@ -428,9 +456,35 @@ socket.on('updateTraps', (serverTraps) => {
     traps = serverTraps;
 });
 
-socket.on('gameMode', (mode) => {
-    gameMode = mode;
-    console.log(`[GameMode] 수신: ${mode}`);
+socket.on('bombStart', (data) => {
+    // 폭탄 시작, 클라이언트 타이머 동기화
+    bombStartTime = data.startTime || Date.now();
+    bombTotalDuration = data.duration;
+
+    console.log(`[Bomb] Started. Duration: ${bombTotalDuration}s`);
+    // 붉은 섬광 효과
+    console.log(`[Bomb] Started. Duration: ${bombTotalDuration}s`);
+    // [수정] 라운드 시작 시 흔들림 제거 (사용자 요청)
+});
+
+socket.on('bombExploded', (data) => {
+    // 폭발 이펙트 (파티클 등)
+    // 여기선 간단히 화면 번쩍임
+    const flash = document.createElement('div');
+    flash.style.position = 'absolute';
+    flash.style.top = '0'; flash.style.left = '0';
+    flash.style.width = '100%'; flash.style.height = '100%';
+    flash.style.backgroundColor = 'white';
+    flash.style.opacity = '0.8';
+    flash.style.pointerEvents = 'none';
+    flash.style.zIndex = '9999';
+    document.body.appendChild(flash);
+
+    setTimeout(() => {
+        flash.style.transition = 'opacity 0.5s';
+        flash.style.opacity = '0';
+        setTimeout(() => flash.remove(), 500);
+    }, 100);
 });
 
 socket.on('mapUpdate', (newMapData) => {
@@ -605,15 +659,32 @@ socket.on('zombieInfect', (data) => {
     }
 });
 
+// [추가] 폭탄 전달 시각 효과
+socket.on('bombPassed', (data) => {
+    // 1. 화면 흔들림 (기본)
+    shakeIntensity = 15;
+
+    // 2. 당사자(보낸사람/받은사람)는 더 강한 효과
+    if (data.senderId === socket.id || data.receiverId === socket.id) {
+        shakeIntensity = 50; // 강진
+    }
+});
+
 socket.on('updateTimer', (time) => {
     gameTime = time;
 });
 
-// [결과판 닫기 버튼]
-const closeResultBtn = document.getElementById('closeResultBtn');
-if (closeResultBtn) {
-    closeResultBtn.onclick = () => {
-        const board = document.getElementById('resultBoard');
+closeResultBtn.onclick = () => {
+    const board = document.getElementById('resultBoard');
+    if (board) board.style.display = 'none';
+};
+
+
+// [추가] 폭탄 모드 결과판 닫기
+const closeBombResultBtn = document.getElementById('bomb-result-close-btn');
+if (closeBombResultBtn) {
+    closeBombResultBtn.onclick = () => {
+        const board = document.getElementById('bomb-result-screen');
         if (board) board.style.display = 'none';
     };
 }
@@ -633,8 +704,39 @@ socket.on('gameResult', (data) => {
         // 초기화
         if (survivorContainer) survivorContainer.style.display = 'none';
 
-        if (data.winner === 'survivors') {
-            h1.innerText = "🎉 인류 승리 🎉";
+        // [Bomb Mode] 전용 결과판 (별도 UI 사용)
+        if (data.type === 'BOMB') {
+            // 좀비 보드는 숨김
+            board.style.display = 'none';
+
+            const bombBoard = document.getElementById('bomb-result-screen');
+            if (bombBoard) {
+                bombBoard.style.display = 'flex';
+
+                const rank1 = document.getElementById('bomb-rank-1-name');
+                const rank2 = document.getElementById('bomb-rank-2-name');
+                const rank3 = document.getElementById('bomb-rank-3-name');
+
+                if (data.ranks) {
+                    if (rank1) rank1.innerText = data.ranks[0] || '-';
+                    if (rank2) rank2.innerText = data.ranks[1] || '-';
+                    if (rank3) rank3.innerText = data.ranks[2] || '-';
+                }
+            }
+            return; // 이후 로직 중단
+        }
+        // [Legacy Support] 기존 폭탄 모드 데이터 처리 (혹시 몰라서 남김, 곧 제거 가능)
+        if (data.host === 'Bomb Mode') {
+            // ... (위 새로운 로직이 처리하므로 여기는 무시되거나 비워도 됨)
+            board.style.display = 'none';
+            return;
+        }
+        // [Zombie Mode]
+        else if (data.winner === 'survivors') {
+            const infoGrid = document.querySelector('.result-info-grid');
+            if (infoGrid) infoGrid.style.display = 'grid'; // 좀비모드면 보이기
+
+            h1.innerText = "🎉 생존자 승리! 🎉";
             h1.style.color = "#2ecc71";
             h1.style.textShadow = "0 0 20px green";
             h2.innerText = `총 ${data.survivorList ? data.survivorList.length : 0}명의 생존자가 탈출했습니다!`;
@@ -768,6 +870,13 @@ function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     ctx.save(); // 문맥 저장
+
+    // [Visual FX] 화면 흔들림 적용
+    if (shakeIntensity > 0) {
+        const dx = (Math.random() - 0.5) * shakeIntensity;
+        const dy = (Math.random() - 0.5) * shakeIntensity;
+        ctx.translate(dx, dy);
+    }
     ctx.scale(camera.zoom, camera.zoom); // 화면 확대
     ctx.translate(-camera.x, -camera.y); // 카메라 시점 이동
 
@@ -831,10 +940,74 @@ function drawPlayers() {
     Object.keys(players).forEach((id) => {
         const p = players[id];
 
+        // [BOMB MODE] Spectator Check
+        if (p.isSpectator) {
+            if (id === socket.id) {
+                // 나는 반투명하게 보임 (고스트)
+                ctx.save();
+                ctx.globalAlpha = 0.5;
+            } else {
+                // 다른 관전자는 안 보임
+                return;
+            }
+        } else {
+            ctx.save(); // Spectator 아닐 때도 restore 맞추기 위해 save
+        }
+
         // 1. 스피드 효과 (노란색 오라)
         if (p.isSpeeding) {
             ctx.fillStyle = 'rgba(241, 196, 15, 0.4)';
             ctx.fillRect(p.x - 4, p.y - 4, TILE_SIZE + 8, TILE_SIZE + 8);
+        }
+
+        // [BOMB MODE] 폭탄 효과 (5단계 점멸)
+        if (gameMode === 'BOMB' && id === taggerId) {
+            const now = Date.now();
+            const elapsedSec = (now - bombStartTime) / 1000;
+            const totalSec = bombTotalDuration;
+            const lastStageSec = 1; // 5단계 (마지막 1초)
+
+            let blinkPeriod = 1000; // 기본 1Hz
+            let colorBase = 'rgba(231, 76, 60, 0.4)'; // Red
+
+            if (totalSec > lastStageSec) {
+                const mainStagesDuration = totalSec - lastStageSec;
+                const stageDuration = mainStagesDuration / 4;
+
+                if (elapsedSec < stageDuration) {
+                    // 1단계: 1Hz
+                    blinkPeriod = 1000;
+                } else if (elapsedSec < stageDuration * 2) {
+                    // 2단계: 2Hz
+                    blinkPeriod = 500;
+                } else if (elapsedSec < stageDuration * 3) {
+                    // 3단계: 4Hz
+                    blinkPeriod = 250;
+                } else if (elapsedSec < mainStagesDuration) {
+                    // 4단계: 8Hz
+                    blinkPeriod = 125;
+                } else {
+                    // 5단계: 점등 (거의 계속 켜짐 + 매우 빠름)
+                    blinkPeriod = 0; // Solid
+                }
+            } else {
+                // 시간이 너무 짧으면 그냥 5단계
+                blinkPeriod = 0;
+            }
+
+            // Blink Logic
+            let visible = true;
+            if (blinkPeriod > 0) {
+                const cycle = now % blinkPeriod;
+                visible = cycle < (blinkPeriod / 2);
+            }
+
+            if (visible || blinkPeriod === 0) {
+                ctx.beginPath();
+                ctx.arc(p.x + TILE_SIZE / 2, p.y + TILE_SIZE / 2, TILE_SIZE * 1.5, 0, Math.PI * 2);
+                ctx.fillStyle = colorBase;
+                ctx.fill();
+            }
         }
 
         // 2. 쉴드 효과 (파란색 보호막 원)
@@ -850,17 +1023,31 @@ function drawPlayers() {
 
         // 3. 플레이어 본체
         ctx.fillStyle = p.color;
+
+        // 관전자이고 나일 경우 흐릿한 회색
+        if (p.isSpectator && id === socket.id) ctx.fillStyle = '#bdc3c7';
+
         ctx.fillRect(p.x, p.y, TILE_SIZE, TILE_SIZE);
 
         if (id === taggerId) {
+            // 술래/폭탄 테두리
             ctx.strokeStyle = '#e74c3c';
             ctx.lineWidth = 4;
             ctx.strokeRect(p.x, p.y, TILE_SIZE, TILE_SIZE);
 
             ctx.fillStyle = '#fff';
-            ctx.font = 'bold 12px Arial';
-            ctx.fillText('술래', p.x + 4, p.y - 6);
+            ctx.font = 'bold 12px "Noto Sans KR", sans-serif';
+
+            if (gameMode === 'BOMB') {
+                // 폭탄 아이콘
+                ctx.fillText('💣', p.x + TILE_SIZE / 2, p.y - 30);
+                // ctx.fillText('폭탄', p.x + 4, p.y - 6);
+            } else {
+                ctx.fillText('술래', p.x + 4, p.y - 6);
+            }
         }
+
+        // (Removed premature restore and brace)
 
         if (id === taggerId) {
             ctx.fillStyle = '#e74c3c'; // 술래: 빨강
@@ -872,7 +1059,7 @@ function drawPlayers() {
 
         ctx.font = (id === taggerId) ? 'bold 14px "Noto Sans KR", sans-serif' : '12px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'center';
-        const nicknameY = (id === taggerId) ? p.y - 22 : p.y - 6;
+        const nicknameY = (id === taggerId && gameMode === 'BOMB') ? p.y - 12 : ((id === taggerId) ? p.y - 22 : p.y - 6);
         ctx.fillText(p.nickname, p.x + TILE_SIZE / 2, nicknameY);
         ctx.textAlign = 'start';
 
@@ -881,6 +1068,10 @@ function drawPlayers() {
             ctx.lineWidth = 2;
             ctx.strokeRect(p.x, p.y, TILE_SIZE, TILE_SIZE);
         }
+
+        // Reset Alpha
+        // Context 복구 (Alpha 등)
+        ctx.restore();
     });
 }
 
@@ -1028,13 +1219,31 @@ function processInput(deltaTimeSec) {
             let movedX = false;
             let movedY = false;
 
-            if (!checkWallCollision(nextX, myPlayer.y)) {
-                myPlayer.x = nextX;
-                movedX = true;
+            // [관전자] 벽 충돌 무시 (단, 맵 밖으로는 이동 불가)
+            if (myPlayer.isSpectator) {
+                const mapWidth = map[0].length * 32;
+                if (nextX >= 0 && nextX <= mapWidth - 32) {
+                    myPlayer.x = nextX;
+                    movedX = true;
+                }
+            } else {
+                if (!checkWallCollision(nextX, myPlayer.y)) {
+                    myPlayer.x = nextX;
+                    movedX = true;
+                }
             }
-            if (!checkWallCollision(myPlayer.x, nextY)) {
-                myPlayer.y = nextY;
-                movedY = true;
+
+            if (myPlayer.isSpectator) {
+                const mapHeight = map.length * 32;
+                if (nextY >= 0 && nextY <= mapHeight - 32) {
+                    myPlayer.y = nextY;
+                    movedY = true;
+                }
+            } else {
+                if (!checkWallCollision(myPlayer.x, nextY)) {
+                    myPlayer.y = nextY;
+                    movedY = true;
+                }
             }
 
             // 미끄러지는 상태에서 벽에 부딪히면(이동 실패하면) 즉시 정지
@@ -1117,6 +1326,12 @@ function update(timestamp) {
     processInput(validDelta / 1000);
     updateCamera(); // 카메라 업데이트
 
+    // [Visual FX] 화면 흔들림 감쇠
+    if (shakeIntensity > 0) {
+        shakeIntensity *= shakeDecay;
+        if (shakeIntensity < 0.5) shakeIntensity = 0;
+    }
+
     const lerpFactor = 0.2;
     Object.keys(players).forEach(id => {
         if (id !== socket.id) {
@@ -1145,14 +1360,6 @@ function update(timestamp) {
 // }
 
 // The instruction implies adding drawHUD() at the end of the draw() function.
-// Since the draw() function itself is not fully provided, I'll place the change
-// based on the context given in the instruction's "Code Edit" snippet.
-// If 'draw' is indeed structured to call requestAnimationFrame(draw) internally,
-// and drawInventory() is the last drawing call before that, then drawHUD() should go here.
-// However, the current 'update' function already calls requestAnimationFrame(update).
-// This suggests 'draw' is a rendering function, not a loop function.
-// Given the instruction, I will assume the user wants to add drawHUD() after drawInventory()
-// within the draw() function, and that the provided snippet represents the end of that function.
 // Since the full 'draw' function is not in the provided document, I cannot directly modify it.
 // I will add a placeholder comment indicating where it would go if the function were present.
 
@@ -1174,6 +1381,8 @@ function draw() {
 function drawShadows() {
     if (!isJoined || !players[socket.id]) return;
     if (!showShadows) return; // 개발자 명령어로 꺼짐 확인
+    // [추가] 관전자는 시야 제한 없음 (벽 통과 등으로 인해 필요)
+    if (players[socket.id].isSpectator) return;
 
     const p = players[socket.id];
     const cx = p.x + TILE_SIZE / 2;
@@ -1356,6 +1565,42 @@ window.addEventListener('keydown', (e) => {
 // [추가] HUD 렌더링
 function drawHUD() {
     if (!isJoined) return;
+
+    // [Bomb Mode HUD]
+    if (gameMode === 'BOMB') {
+        const padding = 10;
+        const boxWidth = 140;
+        const boxHeight = 100;
+        const x = canvas.width - boxWidth - padding;
+        const y = padding + 25; // 접속자 수 아래로 내림
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.strokeStyle = '#e74c3c'; // Red for Bomb
+        ctx.lineWidth = 2;
+        ctx.fillRect(x, y, boxWidth, boxHeight);
+        ctx.strokeRect(x, y, boxWidth, boxHeight);
+
+        ctx.font = 'bold 16px "Noto Sans KR", sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        const textX = x + 15;
+        const textY = y + 15;
+
+        // 생존자 수
+        let survivors = 0;
+        let dead = 0;
+        Object.values(players).forEach(p => { if (p.isSpectator) dead++; else survivors++; });
+
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`🔥 생존: ${survivors}명`, textX, textY);
+        ctx.fillStyle = '#7f8c8d';
+        ctx.fillText(`👻 탈락: ${dead}명`, textX, textY + 30);
+
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillText(`💣 Bomb Mode`, textX, textY + 60);
+        return;
+    }
+
     if (gameMode !== 'ZOMBIE') return; // [수정] 좀비 모드 전용
 
 
@@ -1462,6 +1707,9 @@ function drawMinimap() {
         // 본인은 항상 보임.
         // Cheat가 켜져있으면 모두 보임.
         if (p.playerId !== socket.id && !showAllPlayersOnMinimap) return;
+
+        // 관전자 숨김 (자신은 보이게?)
+        if (p.isSpectator && p.playerId !== socket.id) return;
 
         let color = '#fff';
 

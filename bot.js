@@ -82,6 +82,12 @@ class Bot {
 
     // 메인 업데이트 루프 (Refactored)
     update(players, taggerId, lastTaggerId, callbacks, mapData, gameMode = 'TAG') {
+        // [0] 관전 모드 (Ghost)
+        if (this.isSpectator) {
+            this.processGhostBehavior(mapData);
+            return;
+        }
+
         // [0] 기절 상태 체크
         if (this.stunnedUntil && Date.now() < this.stunnedUntil) return;
 
@@ -141,12 +147,33 @@ class Bot {
         return true; // 미끄러지는 중임
     }
 
+    // [New] 유령 행동 (관전 모드)
+    processGhostBehavior(mapData) {
+        // 벽 무시하고 천천히 배회
+        if (!this.moveDir || (this.moveDir.x === 0 && this.moveDir.y === 0) || Math.random() < 0.02) {
+            const angle = Math.random() * Math.PI * 2;
+            this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+        }
+
+        // 속도는 느리게
+        const speed = 10;
+        this.x += this.moveDir.x * speed;
+        this.y += this.moveDir.y * speed;
+
+        // 맵 밖으로 너무 멀리 나가지 않게 (경계 체크는 유지하거나 넓게)
+        if (this.x < -100) this.moveDir.x = Math.abs(this.moveDir.x);
+        if (this.x > (COLS * TILE_SIZE) + 100) this.moveDir.x = -Math.abs(this.moveDir.x);
+        if (this.y < -100) this.moveDir.y = Math.abs(this.moveDir.y);
+        if (this.y > (ROWS * TILE_SIZE) + 100) this.moveDir.y = -Math.abs(this.moveDir.y);
+    }
+
     // [Helper] 환경 스캔
     scanEnvironment(players, taggerId, lastTaggerId, mapData, gameMode) {
         let isChaser = false;
         if (gameMode === 'ZOMBIE') {
             isChaser = this.isZombie;
         } else {
+            // [Server Fix] server.js passes currentTaggerId as 'taggerId' arg
             isChaser = (taggerId === this.id);
         }
 
@@ -156,6 +183,7 @@ class Bot {
         if (isChaser) {
             // 추격자: 보이는 가장 가까운 타겟 검색
             target = this.findBestTarget(players, lastTaggerId, mapData, gameMode);
+            // if (gameMode === 'BOMB' && isChaser && !target) console.log(`[Bot ${this.nickname}] 폭탄 들고 헤매는 중... (타겟 없음)`);
             if (target) canSee = true;
         } else {
             // 도망자: 가장 가까운 위협 검색
@@ -194,6 +222,7 @@ class Bot {
         if (canSee) {
             // 1. 발견: 추격 및 위치 기억
             this.patrolTarget = null;
+            this.searchTimer = 0; // [Fix] 기존 수색 타이머 초기화 (안 하면 이전 타이머 만료로 즉시 포기함)
             this.chaseMemory = { x: target.x, y: target.y };
 
             // 끼임 방지 (무한 대치 해결)
@@ -314,16 +343,28 @@ class Bot {
 
         if (nextX < 0) { nextX = 0; hitX = true; }
         if (nextX > (mapCols - 1) * TILE_SIZE) { nextX = (mapCols - 1) * TILE_SIZE; hitX = true; }
-        if (checkBotWallCollision(nextX, this.y, mapData)) hitX = true;
-        else this.x = nextX;
+
+        // [Spectator] 벽 무시
+        if (!this.isSpectator) {
+            if (checkBotWallCollision(nextX, this.y, mapData)) hitX = true;
+            else this.x = nextX;
+        } else {
+            this.x = nextX;
+        }
 
         // Y축
         let nextY = this.y + this.moveDir.y * speed;
         let hitY = false;
         if (nextY < 0) { nextY = 0; hitY = true; }
         if (nextY > (mapRows - 1) * TILE_SIZE) { nextY = (mapRows - 1) * TILE_SIZE; hitY = true; }
-        if (checkBotWallCollision(this.x, nextY, mapData)) hitY = true;
-        else this.y = nextY;
+
+        // [Spectator] 벽 무시
+        if (!this.isSpectator) {
+            if (checkBotWallCollision(this.x, nextY, mapData)) hitY = true;
+            else this.y = nextY;
+        } else {
+            this.y = nextY;
+        }
 
         // 양방향 막힘 시 랜덤 탈출 (끼임 방지)
         if (hitX || hitY) {
@@ -384,6 +425,9 @@ class Bot {
                 // 기본 술래잡기: 기절한 사람 제외
                 if (p.stunnedUntil && Date.now() < p.stunnedUntil) continue;
             }
+
+            // [Bomb/General] 관전자 제외 (확실하게)
+            if (p.isSpectator || p.isManualSpectator) continue;
 
             const dist = Math.hypot(p.x - this.x, p.y - this.y);
 
