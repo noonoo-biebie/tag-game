@@ -599,6 +599,12 @@ socket.on('gameMessage', (msg) => {
     }, 5000);
 });
 
+// [추가] 접속자 수 표시 (로그인 화면)
+socket.on('playerCountUpdate', (count) => {
+    const countEl = document.getElementById('connection-count');
+    if (countEl) countEl.innerText = `현재 접속자: ${count}명`;
+});
+
 socket.on('chatMessage', (data) => {
     if (!isJoined) return;
     const div = document.createElement('div');

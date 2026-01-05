@@ -724,8 +724,8 @@ function resetGame() {
 io.on('connection', (socket) => {
     console.log('클라이언트 접속:', socket.id);
     setupSocketEvents(socket);
-    // [추가] 접속 시 현재 플레이어 수 전달
-    socket.emit('playerCountUpdate', Object.keys(players).length);
+    // [추가] 접속 시 현재 플레이어 수 전달 (봇 제외)
+    socket.emit('playerCountUpdate', Object.values(players).filter(p => !(p instanceof Bot)).length);
 });
 
 function setupSocketEvents(socket) {
@@ -812,7 +812,9 @@ function handleJoinGame(socket, data) {
 
     socket.broadcast.emit('newPlayer', players[socket.id]);
     // [추가] 접속자 수 갱신 브로드캐스트
-    io.emit('playerCountUpdate', Object.keys(players).length);
+    // [추가] 접속자 수 갱신 브로드캐스트 (봇 제외)
+    const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
+    io.emit('playerCountUpdate', realUserCount);
 }
 
 function handlePlayerMove(socket, movementData) {
@@ -865,8 +867,9 @@ function handleDisconnect(socket) {
         delete players[socket.id];
         io.emit('disconnectPlayer', socket.id);
         io.emit('gameMessage', `[${leftNickname}] 님이 나갔습니다.`);
-        // [추가] 접속자 수 갱신 브로드캐스트
-        io.emit('playerCountUpdate', Object.keys(players).length);
+        // [추가] 접속자 수 갱신 브로드캐스트 (봇 제외)
+        const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
+        io.emit('playerCountUpdate', realUserCount);
 
         if (socket.id === taggerId) {
             const remainingIds = Object.keys(players);
@@ -909,8 +912,9 @@ function handleChatMessage(socket, msg) {
         const infoMsg = `[System] 봇 ${spawnedCount}마리를 소환했습니다! 🤖`;
         io.emit('gameMessage', infoMsg);
         io.emit('chatMessage', { nickname: 'System', message: infoMsg, playerId: 'system' });
-        // 접속자 수 갱신
-        io.emit('playerCountUpdate', Object.keys(players).length);
+        // 접속자 수 갱신 (봇 제외)
+        const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
+        io.emit('playerCountUpdate', realUserCount);
         return;
     }
 
