@@ -33,7 +33,7 @@ let roundTime = 0;
 let roundTimer = null;
 // [통계 변수 추가]
 let gameStartTime = 0;
-let initialHostId = null;
+let initialHostIds = []; // [수정] 다중 숙주 지원
 let zombieSpawnTimer = null; // [버그 수정] 좀비 스폰 타이머 전역 관리
 
 // [BOMB MODE Variables]
@@ -425,8 +425,9 @@ function checkZombieWin() {
         if (sortedInfectors.length > 0) mvpInfector = players[sortedInfectors[0]];
 
         // 4. 숙주
-        if (initialHostId && players[initialHostId]) hostName = players[initialHostId].nickname;
-        else if (initialHostId) hostName = "나간 플레이어";
+        if (initialHostIds.length > 0) {
+            hostName = initialHostIds.map(hid => players[hid] ? players[hid].nickname : "나간 플레이어").join(", ");
+        }
 
         const resultData = {
             winner: 'zombies', // [추가] 승자 타입
@@ -461,7 +462,7 @@ function startRoundTimer(seconds) {
             clearInterval(roundTimer);
             if (gameMode === 'ZOMBIE') {
                 // [생존자 승리]
-                io.emit('gameMessage', '🎉 생존자 승리! 3분 동안 버텨냈습니다! 🎉');
+                io.emit('gameMessage', '🎉 생존자 승리! 2분 30초 동안 버텨냈습니다! 🎉');
 
                 // 통계 및 명단 집계
                 const ids = Object.keys(players);
@@ -474,8 +475,9 @@ function startRoundTimer(seconds) {
                 let mvpRunner = null;   // 도망자
                 let mvpInfector = null; // 슈퍼 전파자
                 let hostName = 'Unknown';
-                if (initialHostId && players[initialHostId]) hostName = players[initialHostId].nickname;
-                else if (initialHostId) hostName = "나간 플레이어";
+                if (initialHostIds.length > 0) {
+                    hostName = initialHostIds.map(hid => players[hid] ? players[hid].nickname : "나간 플레이어").join(", ");
+                }
 
                 const sortedRunners = [...ids].sort((a, b) => ((players[b].stats?.distance || 0) - (players[a].stats?.distance || 0)));
                 if (sortedRunners.length > 0) mvpRunner = players[sortedRunners[0]];
@@ -559,38 +561,46 @@ function startZombieCountdown() {
             // 감염 시작
             const ids = Object.keys(players);
             if (ids.length > 0) {
-                const hostId = ids[Math.floor(Math.random() * ids.length)];
-                const host = players[hostId];
+                // [수정] 숙주 2명 선정 (인원이 충분하다면)
+                let targetCount = 2;
+                if (ids.length < 2) targetCount = 1;
 
-                if (host && !host.isZombie) {
-                    // [통계] 기록 시작
-                    gameStartTime = Date.now();
-                    initialHostId = hostId;
+                // 셔플 알고리즘으로 랜덤 2명 뽑기
+                const shuffled = ids.sort(() => 0.5 - Math.random());
+                const selectedIds = shuffled.slice(0, targetCount);
 
-                    host.isZombie = true;
-                    host.originalColor = host.color;
-                    host.color = '#2ecc71';
+                gameStartTime = Date.now();
+                initialHostIds = [];
 
-                    // [수정] 숙주 닉네임 변경 (봇/플레이어 공통)
-                    if (host instanceof Bot) {
-                        host.nickname = host.nickname.replace('🤖', '🧟');
-                        if (host.nickname.includes('Bot_')) {
-                            host.nickname = host.nickname.replace('Bot_', 'Zom_');
+                selectedIds.forEach(hostId => {
+                    const host = players[hostId];
+                    if (host && !host.isZombie) {
+                        initialHostIds.push(hostId);
+
+                        host.isZombie = true;
+                        host.originalColor = host.color;
+                        host.color = '#2ecc71';
+
+                        // [수정] 숙주 닉네임 변경 (봇/플레이어 공통)
+                        if (host instanceof Bot) {
+                            host.nickname = host.nickname.replace('🤖', '🧟');
+                            if (host.nickname.includes('Bot_')) {
+                                host.nickname = host.nickname.replace('Bot_', 'Zom_');
+                            }
+                        } else {
+                            if (!host.nickname.startsWith('🧟 ')) {
+                                host.nickname = '🧟 ' + host.nickname;
+                            }
                         }
-                    } else {
-                        // 플레이어도 🧟 접두사 추가
-                        if (!host.nickname.startsWith('🧟 ')) {
-                            host.nickname = '🧟 ' + host.nickname;
-                        }
+
+                        io.emit('playerMoved', host);
+                        io.emit('gameMessage', `🧟 [${host.nickname}] 님이 숙주 좀비가 되었습니다!! (총 ${targetCount}명)`);
+                        io.emit('zombieInfect', { targetId: hostId });
                     }
+                });
 
-                    io.emit('playerMoved', host);
-                    io.emit('gameMessage', `🧟 [${host.nickname}] 님이 최초의 좀비(숙주)가 되었습니다!!`);
-                    io.emit('zombieInfect', { targetId: hostId });
-
-                    // 3분 타이머 시작
-                    startRoundTimer(180);
-                }
+                // [수정] 2분 30초 (150초) 타이머 시작
+                startRoundTimer(150);
             }
         }
     }, 1000);

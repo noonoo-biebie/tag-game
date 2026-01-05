@@ -378,7 +378,7 @@ canvas {
 /* 가이드 모달 스타일 */
 .modal {
     position: fixed;
-    z-index: 2000;
+    z-index: 9999;
     left: 0;
     top: 0;
     width: 100%;

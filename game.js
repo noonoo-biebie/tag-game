@@ -595,7 +595,7 @@ socket.on('gameMessage', (msg) => {
     }
 
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v1.1 (폭탄 모드 추가)';
+        gameMessage.innerText = '달리고 잡기 v1.2 (폭탄 모드 추가)';
     }, 5000);
 });
 

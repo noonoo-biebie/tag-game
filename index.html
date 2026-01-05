@@ -102,7 +102,7 @@
 
     <!-- 닉네임 입력 화면 -->
     <div id="login-screen" style="display: none;"> <!-- 초기엔 숨김 (연결되면 보임) -->
-        <h1>달리고 잡기 v1.1 (폭탄 모드 추가)</h1>
+        <h1>달리고 잡기 v1.2 (폭탄 모드 추가)</h1>
         <div style="margin-bottom: 20px;">
             <input type="text" id="nickname-input" placeholder="닉네임 (최대 10자)" maxlength="10">
             <input type="color" id="color-input" value="#e74c3c" title="캐릭터 색상 선택">
@@ -162,26 +162,82 @@
             <span class="close-btn" id="guide-close">&times;</span>
             <h2>📖 게임 가이드</h2>
 
-            <div class="guide-section">
-                <h3>🎒 아이템 도감</h3>
-                <ul>
-                    <li><span class="icon">⚡</span> <strong>스피드</strong>: 5초간 이동 속도가 엄청 빨라집니다.</li>
-                    <li><span class="icon">🍌</span> <strong>바나나</strong>: 밟으면 미끄러져서 제어가 안 됩니다.</li>
-                    <li><span class="icon">🛡️</span> <strong>방어막</strong>: 술래에게 한번 잡히는 걸 막아줍니다. (다른 아이템 획득 시 해제됨)</li>
-                </ul>
+            <!-- 탭 헤더 -->
+            <div class="tab-header" style="display: flex; border-bottom: 2px solid #ddd; margin-bottom: 15px;">
+                <div class="tab-btn active" onclick="openTab(event, 'tab-basic')"
+                    style="flex: 1; text-align: center; padding: 10px; cursor: pointer; font-weight: bold; border-bottom: 3px solid #3498db; color: #3498db; transition: all 0.3s;">
+                    기본/아이템</div>
+                <div class="tab-btn" onclick="openTab(event, 'tab-modes')"
+                    style="flex: 1; text-align: center; padding: 10px; cursor: pointer; font-weight: bold; color: #7f8c8d; border-bottom: 3px solid transparent; transition: all 0.3s;">
+                    게임 모드</div>
             </div>
 
-            <div class="guide-section">
-                <h3>🤖 봇 성격 분석</h3>
-                <ul>
-                    <li><strong style="color:#e74c3c">공격형 (Aggressive)</strong>: 집요하게 쫓아오며 스피드 아이템을 좋아합니다.</li>
-                    <li><strong style="color:#f1c40f">신중형 (Careful)</strong>: 겁이 많아 멀리서부터 도망치고 방어막을 챙깁니다.</li>
-                    <li><strong style="color:#9b59b6">장난꾸러기 (Playful)</strong>: 예측불가! 바나나를 여기저기 뿌리고 다닙니다.</li>
-                    <li><strong style="color:#3498db">겁쟁이 (Coward)</strong>: 사람이 보이면 무조건 도망갑니다! (술래는 더 무서워함)</li>
-                </ul>
+            <!-- 탭 1: 기본/아이템 -->
+            <div id="tab-basic" class="tab-content" style="display: block;">
+                <div class="guide-section">
+                    <h3>🎒 아이템 도감</h3>
+                    <ul>
+                        <li><span class="icon">⚡</span> <strong>스피드</strong>: 5초간 이동 속도가 엄청 빨라집니다.</li>
+                        <li><span class="icon">🍌</span> <strong>바나나</strong>: 밟으면 미끄러져서 제어가 안 됩니다.</li>
+                        <li><span class="icon">🛡️</span> <strong>방어막</strong>: 술래에게 한번 잡히는 걸 막아줍니다. (다른 아이템 획득 시 해제됨)
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="guide-section">
+                    <h3>🤖 봇 성격 분석</h3>
+                    <ul>
+                        <li><strong style="color:#e74c3c">공격형 (Aggressive)</strong>: 집요하게 쫓아오며 스피드 아이템을 좋아합니다.</li>
+                        <li><strong style="color:#f1c40f">신중형 (Careful)</strong>: 겁이 많아 멀리서부터 도망치고 방어막을 챙깁니다.</li>
+                        <li><strong style="color:#9b59b6">장난꾸러기 (Playful)</strong>: 예측불가! 바나나를 여기저기 뿌리고 다닙니다.</li>
+                        <li><strong style="color:#3498db">겁쟁이 (Coward)</strong>: 사람이 보이면 무조건 도망갑니다! (술래는 더 무서워함)</li>
+                    </ul>
+                </div>
+                <p style="text-align: center; color: #7f8c8d; margin-top: 10px; font-size: 0.9em;">TIP: `/fog`를 입력하면 시야
+                    제한을
+                    끄고 켤 수 있습니다.</p>
             </div>
-            <p style="text-align: center; color: #7f8c8d; margin-top: 10px; font-size: 0.9em;">TIP: `/fog`를 입력하면 시야 제한을
-                끄고 켤 수 있습니다.</p>
+
+            <!-- 탭 2: 게임 모드 -->
+            <div id="tab-modes" class="tab-content" style="display: none;">
+                <div class="guide-section" style="margin-bottom: 20px;">
+                    <h3 style="color: #2c3e50;">🏃‍♂️ 클래식 술래잡기 (Classic)</h3>
+                    <p>가장 기본적인 모드입니다. 술래를 피해 도망치세요! 술래에게 잡히면 즉시 술래가 바뀝니다. 스릴 넘치는 추격전을 즐기세요!</p>
+                </div>
+
+                <div class="guide-section" style="margin-bottom: 20px;">
+                    <h3 style="color: #2ecc71;">🧟 좀비 모드 (Zombie)</h3>
+                    <p><strong>생존 목표 시간: 2분 30초</strong></p>
+                    <p>게임 시작 시 일부 플레이어가 <strong>숙주 좀비</strong>가 됩니다. 좀비에게 닿으면 감염되어 같은 좀비가 됩니다!</p>
+                    <p>모든 인간이 감염되면 좀비 승리, 한 명이라도 끝까지 살아남으면 생존자 승리!</p>
+                </div>
+
+                <div class="guide-section">
+                    <h3 style="color: #e74c3c;">💣 폭탄 모드 (Bomb)</h3>
+                    <p>랜덤하게 <strong>시한폭탄</strong>이 배정됩니다. 시간이 0이 되면 펑! 💥 탈락합니다.</p>
+                    <p>폭탄이 터지기 전에 다른 사람과 부딪혀 폭탄을 넘기세요! (폭탄을 받으면 2초간 기절하니 주의하세요!)</p>
+                    <p>최후의 1인이 남을 때까지 계속됩니다.</p>
+                </div>
+            </div>
+
+            <script>
+                function openTab(evt, tabName) {
+                    var contents = document.getElementsByClassName("tab-content");
+                    for (var i = 0; i < contents.length; i++) {
+                        contents[i].style.display = "none";
+                    }
+                    var tabs = document.getElementsByClassName("tab-btn");
+                    for (var i = 0; i < tabs.length; i++) {
+                        tabs[i].style.borderBottom = "3px solid transparent";
+                        tabs[i].style.color = "#7f8c8d";
+                        tabs[i].classList.remove("active");
+                    }
+                    document.getElementById(tabName).style.display = "block";
+                    evt.currentTarget.style.borderBottom = "3px solid #3498db";
+                    evt.currentTarget.style.color = "#3498db";
+                    evt.currentTarget.classList.add("active");
+                }
+            </script>
         </div>
     </div>
 
