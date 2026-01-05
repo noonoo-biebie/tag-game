@@ -274,16 +274,13 @@ function checkCollision(moverId) {
                 const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
                 if (dist < 30) {
                     if (target.isFrozen) {
-                        // 얼음 상태는 무적 (아무 일도 안 일어남)
-                        // console.log(`[ICE_COLLISION] ${target.nickname} (Frozen) hit by tagger. Ignored.`);
+                        // 얼음 상태는 무적
                     } else {
-                        // [Debug] 태그 발생 로그
-                        console.log(`[ICE_TAG] ${mover.nickname} caught ${target.nickname}. (Frozen: ${target.isFrozen})`);
-
-                        // 태그 성공 -> 도망자 즉시 탈락 (관전 모드 전환)
+                        // 태그 성공
+                        console.log(`[ICE_TAG] ${mover.nickname} caught ${target.nickname}.`);
                         target.isSpectator = true;
-                        target.isEliminated = true; // 탈락 플래그
-                        target.hasItem = null; // 아이템 제거
+                        target.isEliminated = true;
+                        target.hasItem = null;
                         io.to(targetId).emit('updateInventory', null);
                         target.color = 'rgba(255, 255, 255, 0.3)';
 
@@ -291,11 +288,14 @@ function checkCollision(moverId) {
                         io.emit('gameMessage', `💀 [${target.nickname}] 탈락!`);
                         io.emit('effect', { type: 'die', x: target.x, y: target.y });
 
-                        checkIceWin(); // 승리 체크
+                        checkIceWin();
                         return;
                     }
                 }
             }
+        } else {
+            // [Fix] 도망자가 움직일 때 구출(땡) 체크
+            checkIceThaw(moverId);
         }
     } else if (gameMode === 'ZOMBIE') {
         // [수정] 기절한 상태라면 감염 활동 불가 (연쇄 감염 방지)
@@ -1345,7 +1345,8 @@ setInterval(() => {
                 const currentTaggerId = (gameMode === 'BOMB') ? bombHolderId : taggerId;
 
                 players[id].update(players, currentTaggerId, lastTaggerId, {
-                    handleItemEffect: handleItemEffect
+                    handleItemEffect: handleItemEffect,
+                    handleBotAction: handleBotAction
                 }, currentMapData, gameMode);
 
                 // 동기화
@@ -1378,6 +1379,21 @@ setInterval(() => {
         }
     }
 }, 100);
+
+// [New] 봇 전용 액션 처리
+function handleBotAction(botId, actionType) {
+    const bot = players[botId];
+    if (!bot) return;
+
+    if (actionType === 'ice' && gameMode === 'ICE') {
+        if (bot.iceCooldown && Date.now() < bot.iceCooldown) return;
+        bot.isFrozen = true;
+        bot.isStunned = true;
+        bot.iceCooldown = Date.now() + 5000;
+        io.emit('playerMoved', bot);
+        checkIceWin();
+    }
+}
 
 // [BOMB MODE Functions]
 let bombEliminationOrder = []; // [추가] 탈락 순서 기록 (Silver, Bronze 결정용)

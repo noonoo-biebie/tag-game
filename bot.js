@@ -1,5 +1,7 @@
 const { ROWS, COLS, TILE_SIZE, BOT_PERSONALITIES } = require('./config');
 const { getRandomSpawn, checkBotWallCollision, checkLineOfSight } = require('./utils');
+const { processIceSurvivorBehavior } = require('./ice_bot');
+
 
 class Bot {
     constructor(id, mapData) {
@@ -40,6 +42,8 @@ class Bot {
 
         // 도망 상태 (Hysteresis)
         this.isFleeing = false;
+        this.chaseStartTime = 0; // [New] 추격 타이머
+
 
         // 비비기 타이머
         this.wiggleTimer = 0;
@@ -96,6 +100,8 @@ class Bot {
         // 1. 미끄러짐 처리
         if (this.handleSlip(mapData)) return;
 
+        this.callbacks = callbacks; // [Fix] Callbacks init
+
         // 2. 끼임 감지 (0.5초마다)
         if (Date.now() - this.lastCheckTime > 500) {
             const distMoved = Math.hypot(this.x - this.lastCheckPos.x, this.y - this.lastCheckPos.y);
@@ -111,7 +117,7 @@ class Bot {
         if (env.isChaser) {
             this.processChaserBehavior(env.target, env.canSee, mapData);
         } else {
-            this.processSurvivorBehavior(env.target, env.canSee, mapData);
+            this.processSurvivorBehavior(env.target, env.canSee, mapData, players, gameMode);
         }
 
         // 5. 아이템 사용
@@ -217,7 +223,12 @@ class Bot {
             if (target && distToThreat < 250) {
                 if (checkLineOfSight(this.x + 16, this.y + 16, target.x + 16, target.y + 16, mapData)) {
                     canSee = true;
+                    if (this.chaseStartTime === 0) this.chaseStartTime = Date.now();
+                } else {
+                    this.chaseStartTime = 0;
                 }
+            } else {
+                this.chaseStartTime = 0;
             }
         }
 
@@ -274,7 +285,12 @@ class Bot {
     }
 
     // [Helper] 도망자 행동 로직
-    processSurvivorBehavior(target, canSee, mapData) {
+    processSurvivorBehavior(target, canSee, mapData, players, gameMode) {
+        if (gameMode === 'ICE') {
+            processIceSurvivorBehavior(this, target, canSee, mapData, players);
+            return;
+        }
+
         if (canSee) {
             // 1. 발견: 공포 모드 ON & 도망
             this.fearTimer = Date.now() + 2500;

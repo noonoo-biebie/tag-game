@@ -25,7 +25,7 @@ const chatMessages = document.getElementById('chat-messages');
 // [추가] 고급 명령어 자동완성 및 가이드
 const COMMAND_DATA = {
     '/reset': { desc: '🔄 게임 리셋', args: [] },
-    '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag', 'bomb'] },
+    '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag', 'bomb', 'ice'] },
     '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'OPEN', 'ZOMBIE', 'OFFICE', 'BACKROOMS', 'MAZE_BIG'] },
     '/bot': { desc: '🤖 봇 소환 [숫자]', args: [] },
     '/spec': { desc: '👻 관전 모드 토글', args: [] },
@@ -621,10 +621,10 @@ socket.on('gameMessage', (msg) => {
 
     // 버전 정보 표시 (입장 시)
     if (msg.includes('입장했습니다')) {
-        gameMessage.innerText = '달리고 잡기 v1.3.1 (얼음땡 개선)';
+        gameMessage.innerText = '달리고 잡기 v1.3.2 (얼음땡 봇 추가!)';
     }
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v1.3.1 (얼음땡 개선)';
+        gameMessage.innerText = '달리고 잡기 v1.3.2 (얼음땡 봇 추가!)';
     }, 5000);
 });
 
