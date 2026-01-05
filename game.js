@@ -2,9 +2,11 @@ const socket = io({
     transports: ['websocket', 'polling']
 });
 
-// HTML 요소
+// 캔버스 설정
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+// [Fix] Removed duplicate references (isJoined, loopRunning)
+
 const errorLog = document.getElementById('error-log');
 const statusIndicator = document.getElementById('status-indicator');
 const gameMessage = document.getElementById('game-message');
@@ -248,6 +250,8 @@ const camera = {
 
 // 게임 상태 변수
 let isJoined = false;
+let keepAliveInterval = null; // [Fix] Ping Pong 중복 방지 변수 (Interval)
+let keepAliveTimeout = null;  // [Fix] Ping Pong 중복 방지 변수 (Timeout)
 let players = {};
 let items = {};
 let myItem = null;
@@ -369,10 +373,19 @@ socket.on('joinSuccess', (myInfo) => {
             .catch(err => console.log('Keep-alive ping failed'));
     };
 
-    // 입장 직후 1회 테스트
-    setTimeout(keepAlive, 5000);
+    // [Fix] 중복 실행 방지 (기존 타이머 제거)
+    // [Fix] 중복 실행 방지 (기존 타이머 제거)
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
+    if (keepAliveTimeout) clearTimeout(keepAliveTimeout);
+
+    // 입장 직후 1회 테스트 (5초 뒤) - 타이머 저장
+    keepAliveTimeout = setTimeout(() => {
+        keepAlive();
+        keepAliveTimeout = null; // 실행 후 초기화
+    }, 5000);
+
     // 이후 4분마다 반복
-    setInterval(keepAlive, 4 * 60 * 1000);
+    keepAliveInterval = setInterval(keepAlive, 4 * 60 * 1000);
 });
 
 // --- 소켓 이벤트 핸들링 ---
@@ -596,10 +609,22 @@ socket.on('gameMessage', (msg) => {
     if (msg.includes('리셋') || msg.includes('초기화')) {
         const board = document.getElementById('resultBoard');
         if (board) board.style.display = 'none';
+
+        // [New] 얼음땡 결과판도 닫기
+        const iceBoard = document.getElementById('ice-result-screen');
+        if (iceBoard) iceBoard.style.display = 'none';
+
+        // [New] 폭탄 모드 결과판도 닫기
+        const bombBoard = document.getElementById('bomb-result-screen');
+        if (bombBoard) bombBoard.style.display = 'none';
     }
 
+    // 버전 정보 표시 (입장 시)
+    if (msg.includes('입장했습니다')) {
+        gameMessage.innerText = '달리고 잡기 v1.3.1 (얼음땡 개선)';
+    }
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v1.2 (폭탄 모드 추가)';
+        gameMessage.innerText = '달리고 잡기 v1.3.1 (얼음땡 개선)';
     }, 5000);
 });
 
@@ -699,6 +724,15 @@ if (closeBombResultBtn) {
     };
 }
 
+// [추가] 얼음땡 모드 결과판 닫기
+const closeIceResultBtn = document.getElementById('ice-result-close-btn');
+if (closeIceResultBtn) {
+    closeIceResultBtn.onclick = () => {
+        const board = document.getElementById('ice-result-screen');
+        if (board) board.style.display = 'none';
+    };
+}
+
 // [통계] 결과 화면 표시
 socket.on('gameResult', (data) => {
     const board = document.getElementById('resultBoard');
@@ -732,6 +766,49 @@ socket.on('gameResult', (data) => {
                     if (rank2) rank2.innerText = data.ranks[1] || '-';
                     if (rank3) rank3.innerText = data.ranks[2] || '-';
                 }
+            }
+            return; // 이후 로직 중단
+        }
+
+        // [New] 얼음땡 모드 결과판
+        if (data.mode === 'ICE') {
+            // 기존 보드 숨김
+            board.style.display = 'none';
+
+            const iceBoard = document.getElementById('ice-result-screen');
+            if (iceBoard) {
+                iceBoard.style.display = 'flex';
+
+                // Title Update
+                const title = document.getElementById('ice-result-title');
+                if (title) {
+                    if (data.winner === 'tagger') {
+                        title.innerHTML = '🥶 얼음땡 종료!<br><span style="font-size: 2rem; color: #e74c3c;">(술래 승리)</span>';
+                    } else {
+                        title.innerHTML = '🎉 얼음땡 종료!<br><span style="font-size: 2rem; color: #2ecc71;">(도망자 승리)</span>';
+                    }
+                }
+
+                // Data Binding
+                if (data.tagger) document.getElementById('ice-rank-tagger').innerText = data.tagger;
+
+                if (data.iceKing) {
+                    document.getElementById('ice-rank-iceking').innerText = data.iceKing.name;
+                    document.getElementById('ice-val-iceking').innerText = data.iceKing.val;
+                }
+                if (data.proRunner) {
+                    document.getElementById('ice-rank-runner').innerText = data.proRunner.name;
+                    document.getElementById('ice-val-runner').innerText = data.proRunner.val;
+                }
+                if (data.proSavior) {
+                    document.getElementById('ice-rank-savior').innerText = data.proSavior.name;
+                    document.getElementById('ice-val-savior').innerText = data.proSavior.val;
+                }
+
+                // [Fix] 10초 후 결과판 자동 닫기 (서버 리셋 타임과 동기화)
+                setTimeout(() => {
+                    iceBoard.style.display = 'none';
+                }, 10000);
             }
             return; // 이후 로직 중단
         }

@@ -100,9 +100,105 @@
             style="margin-top: 20px; padding: 15px 40px; font-size: 1.5rem; background: #e74c3c; color: white; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 5px 15px rgba(231, 76, 60, 0.4);">닫기</button>
     </div>
 
+    <!-- [New] 얼음땡 모드 전용 결과판 -->
+    <div id="ice-result-screen"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 102; flex-direction: column; align-items: center; justify-content: center;">
+
+        <h1 id="ice-result-title"
+            style="color: #3498db; font-size: 3rem; margin-bottom: 20px; text-shadow: 0 0 20px #2980b9; text-align: center; width: 100%;">
+            🥶 얼음땡 종료!
+        </h1>
+
+        <!-- 4가지 명예의 전당 -->
+        <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; width: 90%;">
+
+            <!-- 1. 술래 -->
+            <div class="award-card" style="background: linear-gradient(135deg, #e74c3c, #c0392b);">
+                <div class="award-icon">👺</div>
+                <div class="award-title">이번 판 술래</div>
+                <div id="ice-rank-tagger" class="award-name">-</div>
+                <div class="award-val">-</div>
+            </div>
+
+            <!-- 2. 눈사람 (얼음 최다 사용) -->
+            <div class="award-card" style="background: linear-gradient(135deg, #3498db, #2980b9);">
+                <div class="award-icon">⛄</div>
+                <div class="award-title">눈사람 (최다 얼음)</div>
+                <div id="ice-rank-iceking" class="award-name">-</div>
+                <div id="ice-val-iceking" class="award-val">0회</div>
+            </div>
+
+            <!-- 3. 프로 러너 (최다 이동) -->
+            <div class="award-card" style="background: linear-gradient(135deg, #f1c40f, #f39c12);">
+                <div class="award-icon">🏃</div>
+                <div class="award-title">프로 러너 (최다 이동)</div>
+                <div id="ice-rank-runner" class="award-name">-</div>
+                <div id="ice-val-runner" class="award-val">0px</div>
+            </div>
+
+            <!-- 4. 프로 구원자 (최다 구출) -->
+            <div class="award-card" style="background: linear-gradient(135deg, #2ecc71, #27ae60);">
+                <div class="award-icon">🚑</div>
+                <div class="award-title">프로 구원자 (최다 구출)</div>
+                <div id="ice-rank-savior" class="award-name">-</div>
+                <div id="ice-val-savior" class="award-val">0회</div>
+            </div>
+
+        </div>
+
+        <button id="ice-result-close-btn"
+            style="margin-top: 30px; padding: 15px 40px; font-size: 1.5rem; background: #3498db; color: white; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);">닫기</button>
+    </div>
+
+    <!-- 스타일 추가 (임시) -->
+    <style>
+        .award-card {
+            width: 220px;
+            height: 280px;
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            transition: transform 0.2s;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .award-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .award-icon {
+            font-size: 5rem;
+            margin-bottom: 20px;
+        }
+
+        .award-title {
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+            opacity: 0.9;
+        }
+
+        .award-name {
+            font-size: 1.8rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+            text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.3);
+        }
+
+        .award-val {
+            font-size: 1rem;
+            opacity: 0.8;
+        }
+    </style>
+    </div>
+
     <!-- 닉네임 입력 화면 -->
     <div id="login-screen" style="display: none;"> <!-- 초기엔 숨김 (연결되면 보임) -->
-        <h1>달리고 잡기 v1.3.0 (얼음땡 모드 추가)</h1>
+        <h1>달리고 잡기 v1.3.1 (얼음땡 개선)</h1>
         <div style="margin-bottom: 20px;">
             <input type="text" id="nickname-input" placeholder="닉네임 (최대 10자)" maxlength="10">
             <input type="color" id="color-input" value="#e74c3c" title="캐릭터 색상 선택">
@@ -154,7 +250,7 @@
 
     <!-- 가이드 버튼 & 모달 -->
     <button id="guide-btn"
-        style="position: fixed; top: 20px; right: 20px; padding: 10px 15px; border-radius: 20px; border: none; background: #2980b9; color: white; font-weight: bold; cursor: pointer; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">?
+        style="position: fixed; top: 20px; right: 130px; padding: 10px 15px; border-radius: 20px; border: none; background: #2980b9; color: white; font-weight: bold; cursor: pointer; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">?
         가이드</button>
 
     <div id="guide-modal" class="modal" style="display: none;">
@@ -243,7 +339,7 @@
 
     <!-- 피드백 버튼 & 모달 -->
     <button id="feedback-btn"
-        style="position: fixed; bottom: 20px; right: 20px; padding: 10px 15px; border-radius: 20px; border: none; background: #e67e22; color: white; font-weight: bold; cursor: pointer; z-index: 6000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">📢
+        style="position: fixed; top: 20px; right: 20px; padding: 10px 15px; border-radius: 20px; border: none; background: #e67e22; color: white; font-weight: bold; cursor: pointer; z-index: 6000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">📢
         피드백</button>
 
     <!-- 피드백 버튼만 남기고 모달은 제거됨 -->

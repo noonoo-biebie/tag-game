@@ -542,7 +542,11 @@ function startRoundTimer(seconds) {
                 io.emit('gameResult', resultData);
 
                 // 10초 후 리셋
+                // 10초 후 리셋
                 setTimeout(() => resetGame(), 10000);
+            } else if (gameMode === 'ICE') {
+                // [얼음땡 도망자 승리] (시간 초과)
+                sendIceResult('runners');
             }
         }
     }, 1000);
@@ -790,7 +794,7 @@ function resetGame() {
 
     const msg = `🔄 게임 리셋! 모드: ${gameMode}`;
     io.emit('gameMessage', msg);
-    io.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' });
+    // io.emit('chatMessage', { nickname: 'System', message: msg, playerId: 'system' }); // [Fix] 중복 메시지 방지 (gameMessage와 겹침)
 }
 
 // 소켓 IO
@@ -861,7 +865,13 @@ function handleJoinGame(socket, data) {
         nickname: data.nickname || '익명',
         isZombie: isZombieStart,
         isSpectator: isSpectator, // [추가]
-        stats: { distance: 0, infectionCount: 0, survivalTime: 0 }
+        stats: {
+            distance: 0,
+            infectionCount: 0,
+            survivalTime: 0,
+            iceUseCount: 0, // [New] 얼음 사용 횟수
+            rescueCount: 0  // [New] 구출 횟수
+        }
     };
 
     if (joinMsg) {
@@ -910,8 +920,8 @@ function handlePlayerMove(socket, movementData) {
 
     const player = players[socket.id];
     if (player) {
-        // [통계] 인간 상태일 때 이동 거리 누적
-        if (!player.isZombie && player.stats) {
+        // [통계] 인간 상태일 때 이동 거리 누적 (관전자 제외)
+        if (!player.isZombie && !player.isSpectator && player.stats) {
             const dx = movementData.x - player.x;
             const dy = movementData.y - player.y;
             player.stats.distance += Math.hypot(dx, dy);
@@ -957,6 +967,9 @@ function handleUseItem(socket) {
             io.emit('playerMoved', player);
             io.emit('gameMessage', `❄️ [${player.nickname}] 얼음!`);
             // 아이템 제거하지 않음 (무한)
+
+            // [New] 통계: 얼음 사용 횟수 증가
+            if (player.stats) player.stats.iceUseCount++;
 
             checkIceWin(); // [Fix] 스스로 얼었을 때도 승리 체크
         } else {
@@ -1531,10 +1544,55 @@ function checkIceWin() {
     console.log(`[ICE_WIN_CHECK] Survivors: ${survivors.length}, Frozen: ${frozenSurvivors.length}`);
 
     if (survivors.length === 0 || survivors.length === frozenSurvivors.length) {
-        io.emit('gameMessage', `🥶 도망자가 모두 잡히거나 얼었습니다! 술래 승리!`);
-        if (iceCountdownTimer) clearInterval(iceCountdownTimer);
-        setTimeout(() => resetGame(), 5000);
+        sendIceResult('tagger');
     }
+}
+
+// [New] 얼음땡 결과 전송 및 리셋
+function sendIceResult(winnerType) {
+    if (iceCountdownTimer) clearInterval(iceCountdownTimer);
+    if (roundTimer) clearInterval(roundTimer); // 라운드 타이머도 정지
+
+    const ids = Object.keys(players);
+    const survivors = ids.filter(id => players[id].id !== taggerId && !players[id].isSpectator); // 실제 생존자 아님, 통계용 대상 (술래 제외 전체)
+    // 통계용 대상: 술래가 아닌 모든 플레이어 (관전자는... 잡힌 사람이니 통계에 포함되어야 함)
+    const nonTaggers = ids.filter(id => players[id].id !== taggerId);
+
+    // 1. 술래
+    const tagger = players[taggerId];
+    const taggerName = tagger ? tagger.nickname : '-';
+
+    // 2. 눈사람 (Ice King) - Most Ice Used
+    const sortedIce = [...nonTaggers].sort((a, b) => ((players[b].stats?.iceUseCount || 0) - (players[a].stats?.iceUseCount || 0)));
+    const iceKing = sortedIce.length > 0 ? players[sortedIce[0]] : null;
+
+    // 3. 프로 러너 (Pro Runner) - Most Distance
+    const sortedRunners = [...nonTaggers].sort((a, b) => ((players[b].stats?.distance || 0) - (players[a].stats?.distance || 0)));
+    const proRunner = sortedRunners.length > 0 ? players[sortedRunners[0]] : null;
+
+    // 4. 프로 구원자 (Pro Savior) - Most Rescues
+    const sortedSaviors = [...nonTaggers].sort((a, b) => ((players[b].stats?.rescueCount || 0) - (players[a].stats?.rescueCount || 0)));
+    const proSavior = sortedSaviors.length > 0 ? players[sortedSaviors[0]] : null;
+
+    const resultData = {
+        mode: 'ICE',
+        winner: winnerType, // 'tagger' or 'runners'
+        tagger: taggerName,
+        iceKing: iceKing ? { name: iceKing.nickname, val: (iceKing.stats?.iceUseCount || 0) + '회' } : { name: '-', val: '-' },
+        proRunner: proRunner ? { name: proRunner.nickname, val: Math.floor(proRunner.stats?.distance || 0) + 'px' } : { name: '-', val: '-' },
+        proSavior: proSavior ? { name: proSavior.nickname, val: (proSavior.stats?.rescueCount || 0) + '회' } : { name: '-', val: '-' }
+    };
+
+    io.emit('gameResult', resultData);
+
+    // 로그 메시지 전송
+    if (winnerType === 'tagger') {
+        io.emit('gameMessage', `🥶 도망자가 모두 잡히거나 얼었습니다! 술래 승리!`);
+    } else {
+        io.emit('gameMessage', '🎉 도망자 승리! 술래를 피해 살아남았습니다! 🎉');
+    }
+
+    setTimeout(() => resetGame(), 10000);
 }
 
 // [New] 얼음땡에서 도망자 간 땡(Thaw) 로직
@@ -1558,6 +1616,9 @@ function checkIceThaw(moverId) {
                 other.isStunned = false;
                 other.stunnedUntil = 0;
                 other.iceCooldown = Date.now() + 5000; // 5초 쿨타임
+
+                // [New] 통계: 구출 횟수 증가
+                if (mover.stats) mover.stats.rescueCount++;
 
                 io.emit('playerMoved', other);
                 io.emit('gameMessage', `🔨 [${mover.nickname}]님이 [${other.nickname}]님을 녹여주었습니다!`);
