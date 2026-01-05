@@ -413,6 +413,11 @@ socket.on('playerMoved', (playerInfo) => {
 
             // [관전 모드 동기화]
             players[socket.id].isSpectator = playerInfo.isSpectator;
+            // [관전 모드 동기화]
+            players[socket.id].isSpectator = playerInfo.isSpectator;
+
+            // [얼음 상태 동기화]
+            players[socket.id].isFrozen = playerInfo.isFrozen;
         }
         return; // 위치 업데이트는 클라이언트 예측 이동 우선
     }
@@ -432,6 +437,7 @@ socket.on('playerMoved', (playerInfo) => {
 
         players[playerInfo.playerId].isZombie = playerInfo.isZombie;
         players[playerInfo.playerId].isSpectator = playerInfo.isSpectator; // [추가] 관전 상태 동기화
+        players[playerInfo.playerId].isFrozen = playerInfo.isFrozen; // [추가] 얼음 상태 동기화
     }
 });
 
@@ -1051,6 +1057,15 @@ function drawPlayers() {
             }
         }
 
+        // [Refinement] 얼음 상태 이모지 표시 (캐릭터 중앙)
+        if (p.isFrozen) {
+            ctx.font = '24px Arial'; // 조금 크게
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('❄️', p.x + TILE_SIZE / 2, p.y + TILE_SIZE / 2);
+            ctx.textBaseline = 'alphabetic'; // 복구
+        }
+
 
 
         if (id === taggerId) {
@@ -1100,9 +1115,24 @@ function drawInventory() {
         if (myItem === 'speed') icon = '⚡';
         else if (myItem === 'banana') icon = '🍌';
         else if (myItem === 'shield') icon = '🛡️';
+        else if (myItem === 'ice') icon = '❄️';
 
         ctx.fillStyle = '#fff';
         ctx.fillText(icon, x + slotSize / 2, y + slotSize / 2);
+
+        // [New] 얼음 쿨타임 표시
+        if (myItem === 'ice' && players[socket.id] && players[socket.id].iceCooldown) {
+            const remain = Math.ceil((players[socket.id].iceCooldown - Date.now()) / 1000);
+            if (remain > 0) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; // 배경 어둡게
+                ctx.fillRect(x, y, slotSize, slotSize);
+
+                ctx.fillStyle = '#e74c3c'; // 빨간색 글씨
+                ctx.font = 'bold 20px Arial';
+                ctx.fillText(remain, x + slotSize / 2, y + slotSize / 2);
+            }
+        }
+        // ctx.fillText(icon, x + slotSize / 2, y + slotSize / 2); // [Remove] 중복 제거
 
         ctx.font = '12px Arial';
         ctx.fillText('Space', x + slotSize / 2, y - 10);
@@ -1174,6 +1204,9 @@ function processInput(deltaTimeSec) {
     // [기절 체크] (태그 당함 OR 좀비 감염)
     if (isStunned) return;
     if (players[socket.id].stunnedUntil && Date.now() < players[socket.id].stunnedUntil) return;
+
+    // [Refinement] 얼음 상태 이동 차단 (클라이언트)
+    if (players[socket.id].isFrozen) return;
 
     let dx = 0; let dy = 0;
 
@@ -1602,7 +1635,53 @@ function drawHUD() {
         return;
     }
 
-    if (gameMode !== 'ZOMBIE') return; // [수정] 좀비 모드 전용
+    if (gameMode !== 'ZOMBIE' && gameMode !== 'ICE') return; // [수정] 좀비/얼음땡 모드 전용
+
+    if (gameMode === 'ICE') {
+        const padding = 10;
+        const boxWidth = 140;
+        const boxHeight = 110;
+        const x = canvas.width - boxWidth - padding;
+        const y = padding;
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.strokeStyle = '#3498db'; // Blue for Ice
+        ctx.lineWidth = 2;
+        ctx.fillRect(x, y, boxWidth, boxHeight);
+        ctx.strokeRect(x, y, boxWidth, boxHeight);
+
+        ctx.font = 'bold 14px "Noto Sans KR", sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        const textX = x + 10;
+        const textY = y + 15;
+
+        // 통계 계산
+        let runners = 0;
+        let frozen = 0;
+        Object.values(players).forEach(p => {
+            if (p.isSpectator || p.playerId === taggerId) return;
+            if (p.isFrozen) frozen++;
+            else runners++;
+        });
+
+        // 타이머 표시 (3분 카운트다운 가정)
+        // gameTime 변수가 서버에서 동기화된다고 가정 (보통 남은 초)
+        const min = Math.floor(gameTime / 60);
+        const sec = gameTime % 60;
+        const timeStr = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+
+        ctx.fillStyle = '#f1c40f';
+        ctx.fillText(`⏱️ 남은 시간: ${timeStr}`, textX, textY);
+
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`🏃 도망자: ${runners}명`, textX, textY + 30);
+
+        ctx.fillStyle = '#3498db'; // Ice Color
+        ctx.fillText(`❄️ 얼음: ${frozen}명`, textX, textY + 60);
+
+        return;
+    }
 
 
     // 생존자 수 계산

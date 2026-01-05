@@ -35,6 +35,8 @@ let roundTimer = null;
 let gameStartTime = 0;
 let initialHostIds = []; // [수정] 다중 숙주 지원
 let zombieSpawnTimer = null; // [버그 수정] 좀비 스폰 타이머 전역 관리
+let gameLoop = null; // 게임 루프 타이머
+let iceCountdownTimer = null; // [New] 얼음땡 카운트다운 타이머
 
 // [BOMB MODE Variables]
 let bombHolderId = null;
@@ -60,7 +62,14 @@ function spawnItem() {
 
     const pos = getRandomSpawn(currentMapData);
     const id = itemNextId++;
-    const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+
+    let availableTypes = ITEM_TYPES;
+    // [New] 얼음땡 모드에서는 실드 제외 (밸런스)
+    if (gameMode === 'ICE') {
+        availableTypes = availableTypes.filter(t => t !== 'shield');
+    }
+
+    const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
 
     items[id] = { x: pos.x, y: pos.y, type: type };
     io.emit('updateItems', items);
@@ -103,7 +112,11 @@ function checkItemCollection(playerId) {
     const player = players[playerId];
     if (!player) return;
     if (player.isZombie) return; // 좀비는 아이템 획득 불가
+    if (!player) return;
+    if (player.isZombie) return; // 좀비는 아이템 획득 불가
     if (player.isSpectator) return; // [추가] 관전자 아이템 획득 불가
+    // [Refinement] 얼음땡 모드: 도망자는 맵 아이템 획득 불가
+    if (gameMode === 'ICE' && playerId !== taggerId) return;
 
     // [수정] 이미 아이템이 있어도 새로운 아이템 획득 가능 (교체)
 
@@ -246,6 +259,41 @@ function checkCollision(moverId) {
                     io.emit('tagOccurred', { newTaggerId: taggerId });
                     console.log(`태그 발생: ${mover.nickname} -> ${target.nickname}`);
                     break;
+                }
+            }
+        }
+    } else if (gameMode === 'ICE') {
+        if (!taggerId) return;
+        // 술래가 도망자를 칠 때
+        if (moverId === taggerId) {
+            for (const targetId in players) {
+                if (targetId === moverId) continue;
+                const target = players[targetId];
+                if (target.isSpectator) continue;
+
+                const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
+                if (dist < 30) {
+                    if (target.isFrozen) {
+                        // 얼음 상태는 무적 (아무 일도 안 일어남)
+                        // console.log(`[ICE_COLLISION] ${target.nickname} (Frozen) hit by tagger. Ignored.`);
+                    } else {
+                        // [Debug] 태그 발생 로그
+                        console.log(`[ICE_TAG] ${mover.nickname} caught ${target.nickname}. (Frozen: ${target.isFrozen})`);
+
+                        // 태그 성공 -> 도망자 즉시 탈락 (관전 모드 전환)
+                        target.isSpectator = true;
+                        target.isEliminated = true; // 탈락 플래그
+                        target.hasItem = null; // 아이템 제거
+                        io.to(targetId).emit('updateInventory', null);
+                        target.color = 'rgba(255, 255, 255, 0.3)';
+
+                        io.emit('playerMoved', target);
+                        io.emit('gameMessage', `💀 [${target.nickname}] 탈락!`);
+                        io.emit('effect', { type: 'die', x: target.x, y: target.y });
+
+                        checkIceWin(); // 승리 체크
+                        return;
+                    }
                 }
             }
         }
@@ -635,6 +683,12 @@ function resetGame() {
         io.emit('mapUpdate', currentMapData);
     }
 
+    // Clear timer
+    if (iceCountdownTimer) {
+        clearInterval(iceCountdownTimer);
+        iceCountdownTimer = null;
+    }
+
     // [BOMB] 초기화
     bombHolderId = null;
     bombEndTime = 0;
@@ -666,6 +720,11 @@ function resetGame() {
         p.hasItem = null;
         p.hasShield = false;
         p.isSpeeding = false;
+
+        // [Refinement] 얼음/기절 상태 확실한 초기화
+        p.isFrozen = false;
+        p.isStunned = false;
+        p.iceCooldown = 0;
 
         // 좀비 상태 초기화
         p.isZombie = false;
@@ -720,6 +779,10 @@ function resetGame() {
     } else if (gameMode === 'BOMB') {
         taggerId = null;
         startBombRound();
+    } else if (gameMode === 'ICE') {
+        taggerId = null;
+        io.emit('updateTagger', null); // [Fix] 클라이언트 술래 표시 제거
+        startIceCountdown();
     }
 
     io.emit('currentPlayers', players);
@@ -788,6 +851,7 @@ function handleJoinGame(socket, data) {
     }
 
     players[socket.id] = {
+        id: socket.id, // [Fix] id 속성 추가 (중요: 이것이 없어서 taggerId 비교가 실패했음)
         x: spawnPos.x,
         y: spawnPos.y,
         playerId: socket.id,
@@ -825,11 +889,22 @@ function handleJoinGame(socket, data) {
     // [추가] 접속자 수 갱신 브로드캐스트 (봇 제외)
     const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
     io.emit('playerCountUpdate', realUserCount);
+
+    // [Fix] 입장 성공 이벤트 전송
+    socket.emit('joinSuccess', players[socket.id]);
 }
 
 function handlePlayerMove(socket, movementData) {
     // [기절 체크]
+    // [기절 체크]
     if (players[socket.id] && players[socket.id].stunnedUntil && Date.now() < players[socket.id].stunnedUntil) {
+        return;
+    }
+
+    // [Refinement] 얼음 상태 이동 차단 (완전 정지)
+    // [Refinement] 얼음 상태 이동 차단 (완전 정지)
+    if (players[socket.id] && players[socket.id].isFrozen) {
+        // 얼음 상태에서는 위치 업데이트도 막아야 함 (클라이언트 예측 이동 롤백 유도)
         return;
     }
 
@@ -846,6 +921,12 @@ function handlePlayerMove(socket, movementData) {
         player.y = movementData.y;
         io.emit('playerMoved', player);
         checkCollision(socket.id);
+
+        // [New] 얼음땡 모드 땡(Thaw) 체크 - 이동할 때마다 체크
+        if (gameMode === 'ICE') {
+            checkIceThaw(socket.id);
+        }
+
         checkItemCollection(socket.id);
         checkTrapCollision(socket.id);
     }
@@ -860,9 +941,30 @@ function handleUseItem(socket) {
 
     if (player.hasItem) {
         const itemType = player.hasItem;
-        player.hasItem = null;
-        io.to(socket.id).emit('updateInventory', null);
-        handleItemEffect(socket.id, itemType);
+
+        // [Refinement] 얼음 아이템 로직 (소모되지 않음)
+        if (gameMode === 'ICE' && itemType === 'ice') {
+            // 쿨타임 체크
+            if (player.iceCooldown && Date.now() < player.iceCooldown) {
+                const remain = Math.ceil((player.iceCooldown - Date.now()) / 1000);
+                socket.emit('gameMessage', `❄️ 쿨타임 중입니다 (${remain}초)`);
+                return;
+            }
+
+            // 얼음 사용
+            player.isFrozen = true;
+            player.isStunned = true; // 이동 불가
+            io.emit('playerMoved', player);
+            io.emit('gameMessage', `❄️ [${player.nickname}] 얼음!`);
+            // 아이템 제거하지 않음 (무한)
+
+            checkIceWin(); // [Fix] 스스로 얼었을 때도 승리 체크
+        } else {
+            // 일반 아이템 (소모)
+            player.hasItem = null;
+            io.to(socket.id).emit('updateInventory', null);
+            handleItemEffect(socket.id, itemType);
+        }
     }
 }
 
@@ -1038,6 +1140,21 @@ function handleChatMessage(socket, msg) {
         } else if (mode === 'tag') {
             gameMode = 'TAG';
             resetGame();
+        } else if (mode === 'ice') {
+            if (Object.keys(players).length < 2) {
+                // [수정] 채팅 창 알림으로 변경 (User Request)
+                socket.emit('chatMessage', {
+                    nickname: 'System',
+                    message: "🚫 인원이 부족하여 얼음땡 모드를 시작할 수 없습니다. (최소 2명)",
+                    playerId: 'system'
+                });
+                return;
+            }
+
+            io.emit('gameMessage', `❄️ [얼음땡] 모드가 선택되었습니다! (10초 대기)`);
+            gameMode = 'ICE';
+            resetGame(); // 리셋 실행 (리셋 내부에서 startIceCountdown 호출됨)
+            // startIceCountdown(); // [삭제] 리셋에서 호출되므로 중복 제거
         } else {
             socket.emit('chatMessage', { nickname: 'System', message: "사용법: /mode [zombie/tag] [봇수]", playerId: 'system' });
         }
@@ -1207,27 +1324,45 @@ setTimeout(() => {
 
 // 게임 루프 (봇 업데이트)
 setInterval(() => {
-    Object.keys(players).forEach(id => {
-        if (players[id] instanceof Bot) {
-            // [중요] 봇에게 게임 state와 callback 전달
-            // gameMode 추가 전달 (BOMB 모드면 bombHolderId를 술래로 취급)
-            const currentTaggerId = (gameMode === 'BOMB') ? bombHolderId : taggerId;
+    try {
+        Object.keys(players).forEach(id => {
+            if (players[id] instanceof Bot) {
+                // [중요] 봇에게 게임 state와 callback 전달
+                // gameMode 추가 전달 (BOMB 모드면 bombHolderId를 술래로 취급)
+                const currentTaggerId = (gameMode === 'BOMB') ? bombHolderId : taggerId;
 
-            players[id].update(players, currentTaggerId, lastTaggerId, {
-                handleItemEffect: handleItemEffect
-            }, currentMapData, gameMode);
+                players[id].update(players, currentTaggerId, lastTaggerId, {
+                    handleItemEffect: handleItemEffect
+                }, currentMapData, gameMode);
 
-            // 동기화
-            io.emit('playerMoved', players[id]);
-            checkCollision(id);
-            checkItemCollection(id);
-            checkTrapCollision(id);
+                // 동기화
+                io.emit('playerMoved', players[id]);
+                checkCollision(id);
+                checkItemCollection(id);
+                checkTrapCollision(id);
+
+                // [Fix] 바나나(isSlipped) 상태 해제 체크
+                if (players[id].isSlipped && players[id].slipStartTime) {
+                    if (Date.now() - players[id].slipStartTime > 3000) {
+                        players[id].isSlipped = false;
+                        players[id].slipStartTime = 0;
+                    }
+                }
+            }
+        });
+
+        // [BOMB] 게임 루프
+        if (gameMode === 'BOMB') {
+            updateBombGame();
         }
-    });
-
-    // [BOMB] 게임 루프
-    if (gameMode === 'BOMB') {
-        updateBombGame();
+    } catch (e) {
+        // [User Request] 에러 억제
+        if (e.message && e.message.includes("reading 'length'")) {
+            // Suppress
+        } else {
+            console.error("GameLoop Error:", e);
+            io.emit('serverError', { msg: `GameLoop Error: ${e.message}`, level: 'critical' });
+        }
     }
 }, 100);
 
@@ -1363,3 +1498,104 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`서버 실행: http://localhost:${PORT}`);
 });
+
+// [New] 얼음땡 카운트다운 시작
+function startIceCountdown() {
+    let count = 10;
+    io.emit('gameMessage', `⏳ ${count}초 후 시작합니다! 도망자는 '얼음' 아이템을 받습니다.`);
+
+    if (iceCountdownTimer) clearInterval(iceCountdownTimer);
+    iceCountdownTimer = setInterval(() => {
+        count--;
+        if (count > 0) {
+            io.emit('gameMessage', `${count}...`);
+        } else {
+            clearInterval(iceCountdownTimer);
+            startIceRound(); // Starts the actual round
+        }
+    }, 1000);
+}
+
+// [New] 얼음땡 승리 체크
+function checkIceWin() {
+    if (gameMode !== 'ICE') return;
+
+    const ids = Object.keys(players);
+    const survivors = ids.filter(id => !players[id].isSpectator && players[id].id !== taggerId);
+
+    // Check if all living survivors are frozen
+    // Check if all living survivors are frozen
+    const frozenSurvivors = survivors.filter(id => players[id].isFrozen);
+
+    // 승리 조건: 생존자가 0명이거나(모두 탈락), 남은 생존자가 모두 얼었을 때
+    console.log(`[ICE_WIN_CHECK] Survivors: ${survivors.length}, Frozen: ${frozenSurvivors.length}`);
+
+    if (survivors.length === 0 || survivors.length === frozenSurvivors.length) {
+        io.emit('gameMessage', `🥶 도망자가 모두 잡히거나 얼었습니다! 술래 승리!`);
+        if (iceCountdownTimer) clearInterval(iceCountdownTimer);
+        setTimeout(() => resetGame(), 5000);
+    }
+}
+
+// [New] 얼음땡에서 도망자 간 땡(Thaw) 로직
+function checkIceThaw(moverId) {
+    const mover = players[moverId];
+    // [Fix] 술래는 절대로 땡을 할 수 없음 (이중 체크)
+    if (!mover || mover.id === taggerId || mover.isSpectator || mover.isFrozen) return;
+    if (taggerId && mover.id === taggerId) return; // 확실하게 차단
+
+    for (const otherId in players) {
+        if (otherId === moverId) continue;
+        const other = players[otherId];
+        if (other.id === taggerId || other.isSpectator) continue;
+
+        // 얼어있는 동료를 건드렸는지 확인
+        if (other.isFrozen) {
+            const dist = Math.hypot(mover.x - other.x, mover.y - other.y);
+            if (dist < 30) {
+                // 땡!
+                other.isFrozen = false;
+                other.isStunned = false;
+                other.stunnedUntil = 0;
+                other.iceCooldown = Date.now() + 5000; // 5초 쿨타임
+
+                io.emit('playerMoved', other);
+                io.emit('gameMessage', `🔨 [${mover.nickname}]님이 [${other.nickname}]님을 녹여주었습니다!`);
+                return;
+            }
+        }
+    }
+}
+
+function startIceRound() {
+    gameMode = 'ICE';
+    io.emit('gameMode', 'ICE');
+    io.emit('gameMessage', '❄️ 얼음땡 시작! 술래가 선정되었습니다!');
+
+    // [Refinement] 시작 시 술래 선정 (준비 시간엔 없음)
+    const ids = Object.keys(players).filter(id => !players[id].isSpectator);
+    if (ids.length > 0) {
+        taggerId = ids[Math.floor(Math.random() * ids.length)];
+        io.emit('updateTagger', taggerId);
+    }
+
+    // 아이템 지급 및 초기화
+    Object.keys(players).forEach(id => {
+        const p = players[id];
+        p.isFrozen = false;
+        p.isStunned = false;
+        p.iceCooldown = 0;
+
+        if (id !== taggerId && !p.isSpectator) {
+            p.hasItem = 'ice'; // 얼음 아이템 지급
+            io.to(id).emit('updateInventory', 'ice');
+        } else {
+            p.hasItem = null;
+            io.to(id).emit('updateInventory', null);
+        }
+        io.emit('playerMoved', p);
+    });
+
+    // 라운드 타이머 (3분)
+    startRoundTimer(180);
+}

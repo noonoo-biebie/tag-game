@@ -102,7 +102,7 @@
 
     <!-- 닉네임 입력 화면 -->
     <div id="login-screen" style="display: none;"> <!-- 초기엔 숨김 (연결되면 보임) -->
-        <h1>달리고 잡기 v1.3.0 (얼음땡 모드 추가)</h1>
+        <h1>달리고 잡기 v1.2 (폭탄 모드 추가)</h1>
         <div style="margin-bottom: 20px;">
             <input type="text" id="nickname-input" placeholder="닉네임 (최대 10자)" maxlength="10">
             <input type="color" id="color-input" value="#e74c3c" title="캐릭터 색상 선택">

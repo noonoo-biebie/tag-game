@@ -90,6 +90,9 @@ class Bot {
         // [0] 기절 상태 체크
         if (this.stunnedUntil && Date.now() < this.stunnedUntil) return;
 
+        // [Refinement] 얼음 상태 체크 (봇도 얼면 정지)
+        if (this.isFrozen) return;
+
         // 1. 미끄러짐 처리
         if (this.handleSlip(mapData)) return;
 
@@ -402,6 +405,9 @@ class Bot {
             } else {
                 // 기본 술래잡기: 기절한 사람 제외
                 if (p.stunnedUntil && Date.now() < p.stunnedUntil) continue;
+
+                // [Refinement] 얼음땡 모드: 얼어있는 사람 제외 (이미 잡힘)
+                if (gameMode === 'ICE' && p.isFrozen) continue;
             }
 
             // [Bomb/General] 관전자 제외 (확실하게)
