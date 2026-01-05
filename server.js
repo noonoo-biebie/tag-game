@@ -329,6 +329,7 @@ function checkCollision(moverId) {
                     io.emit('gameMessage', `🧟 [${human.nickname}] 님이 좀비에게 감염되었습니다!`);
 
                     const zombieId = (zombie === mover) ? moverId : targetId;
+                    checkZombieWin(); // [버그 수정] 감염 시 승리 조건 체크
                 }
             }
         }
@@ -561,9 +562,11 @@ function startZombieCountdown() {
             // 감염 시작
             const ids = Object.keys(players);
             if (ids.length > 0) {
-                // [수정] 숙주 2명 선정 (인원이 충분하다면)
-                let targetCount = 2;
-                if (ids.length < 2) targetCount = 1;
+                // [수정] 숙주 수 밸런스 조정 (1/32/64)
+                let targetCount = 1;
+                const totalPlayers = ids.length;
+                if (totalPlayers >= 64) targetCount = 3;
+                else if (totalPlayers >= 32) targetCount = 2;
 
                 // 셔플 알고리즘으로 랜덤 2명 뽑기
                 const shuffled = ids.sort(() => 0.5 - Math.random());
@@ -877,9 +880,11 @@ function handleDisconnect(socket) {
         delete players[socket.id];
         io.emit('disconnectPlayer', socket.id);
         io.emit('gameMessage', `[${leftNickname}] 님이 나갔습니다.`);
-        // [추가] 접속자 수 갱신 브로드캐스트 (봇 제외)
         const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
         io.emit('playerCountUpdate', realUserCount);
+
+        // [버그 수정] 좀비 모드에서 생존자가 나갈 경우 승리 판정 체크
+        if (gameMode === 'ZOMBIE') checkZombieWin();
 
         if (socket.id === taggerId) {
             const remainingIds = Object.keys(players);
