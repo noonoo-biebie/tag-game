@@ -1,5 +1,5 @@
 const { ROWS, COLS, TILE_SIZE, BOT_PERSONALITIES } = require('./config');
-const { getRandomSpawn, checkBotWallCollision, checkLineOfSight, findPath } = require('./utils');
+const { getRandomSpawn, checkBotWallCollision, checkLineOfSight } = require('./utils');
 
 class Bot {
     constructor(id, mapData) {
@@ -26,8 +26,7 @@ class Bot {
         this.stunnedUntil = 0;
 
         // AI 제어 변수
-        this.path = []; // 현재 이동 경로 (BFS)
-        this.lastPathTime = 0; // 경로 계산 시간
+
         this.wanderTarget = null; // 배회 목표 지점
         this.moveDir = { x: 0, y: 0 };
 
@@ -130,8 +129,10 @@ class Bot {
         let nextY = this.y + this.slipDir.y * slipSpeed;
 
         // 맵 경계 체크
-        if (nextX < 0) nextX = 0; else if (nextX > (COLS - 1) * TILE_SIZE) nextX = (COLS - 1) * TILE_SIZE;
-        if (nextY < 0) nextY = 0; else if (nextY > (ROWS - 1) * TILE_SIZE) nextY = (ROWS - 1) * TILE_SIZE;
+        const mapRows = mapData.length;
+        const mapCols = mapData[0].length;
+        if (nextX < 0) nextX = 0; else if (nextX > (mapCols - 1) * TILE_SIZE) nextX = (mapCols - 1) * TILE_SIZE;
+        if (nextY < 0) nextY = 0; else if (nextY > (mapRows - 1) * TILE_SIZE) nextY = (mapRows - 1) * TILE_SIZE;
 
         if (checkBotWallCollision(nextX, nextY, mapData)) {
             this.isSlipped = false;
@@ -161,10 +162,13 @@ class Bot {
         this.y += this.moveDir.y * speed;
 
         // 맵 밖으로 너무 멀리 나가지 않게 (경계 체크는 유지하거나 넓게)
+        // 맵 밖으로 너무 멀리 나가지 않게 (경계 체크는 유지하거나 넓게)
+        const mapRows = mapData.length;
+        const mapCols = mapData[0].length;
         if (this.x < -100) this.moveDir.x = Math.abs(this.moveDir.x);
-        if (this.x > (COLS * TILE_SIZE) + 100) this.moveDir.x = -Math.abs(this.moveDir.x);
+        if (this.x > (mapCols * TILE_SIZE) + 100) this.moveDir.x = -Math.abs(this.moveDir.x);
         if (this.y < -100) this.moveDir.y = Math.abs(this.moveDir.y);
-        if (this.y > (ROWS * TILE_SIZE) + 100) this.moveDir.y = -Math.abs(this.moveDir.y);
+        if (this.y > (mapRows * TILE_SIZE) + 100) this.moveDir.y = -Math.abs(this.moveDir.y);
     }
 
     // [Helper] 환경 스캔
@@ -382,33 +386,7 @@ class Bot {
         }
     }
 
-    // [Legacy] Wander using BFS (Used if needed, currently mainly using doPatrol)
-    wander(mapData) {
-        if (this.path.length > 0) {
-            const nextNode = this.path[0];
-            const dx = nextNode.x - this.x;
-            const dy = nextNode.y - this.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
 
-            if (dist < 20) {
-                this.path.shift();
-            } else {
-                this.moveDir = { x: dx / dist, y: dy / dist };
-                this.moveToDir(mapData);
-            }
-            return;
-        }
-
-        const target = getRandomSpawn(mapData);
-        this.wanderTarget = target;
-        const newPath = findPath(this.x, this.y, target.x, target.y, mapData);
-        if (newPath.length > 0) {
-            this.path = newPath;
-        } else {
-            this.path = [];
-            this.moveDir = { x: 0, y: 0 };
-        }
-    }
 
     findBestTarget(players, lastTaggerId, mapData, gameMode = 'TAG') {
         let closest = null;

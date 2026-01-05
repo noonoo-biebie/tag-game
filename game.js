@@ -302,9 +302,7 @@ window.addEventListener('click', (e) => {
     if (e.target == guideModal) {
         guideModal.style.display = 'none';
     }
-    if (e.target == guideModal) {
-        guideModal.style.display = 'none';
-    }
+
 });
 
 
@@ -431,7 +429,7 @@ socket.on('playerMoved', (playerInfo) => {
         // 시각 효과 동기화 추가
         players[playerInfo.playerId].hasShield = playerInfo.hasShield;
         players[playerInfo.playerId].isSpeeding = playerInfo.isSpeeding;
-        players[playerInfo.playerId].isSpeeding = playerInfo.isSpeeding;
+
         players[playerInfo.playerId].isZombie = playerInfo.isZombie;
         players[playerInfo.playerId].isSpectator = playerInfo.isSpectator; // [추가] 관전 상태 동기화
     }
@@ -463,7 +461,7 @@ socket.on('bombStart', (data) => {
 
     console.log(`[Bomb] Started. Duration: ${bombTotalDuration}s`);
     // 붉은 섬광 효과
-    console.log(`[Bomb] Started. Duration: ${bombTotalDuration}s`);
+
     // [수정] 라운드 시작 시 흔들림 제거 (사용자 요청)
 });
 
@@ -1053,7 +1051,7 @@ function drawPlayers() {
             }
         }
 
-        // (Removed premature restore and brace)
+
 
         if (id === taggerId) {
             ctx.fillStyle = '#e74c3c'; // 술래: 빨강
@@ -1281,8 +1279,7 @@ let loopRunning = false;
 
 // --- 렌더링 및 카메라 업데이트 ---
 
-// updateCamera는 위에서 정의됨 (또는 여기서 정의)
-// 중복 camera 선언 제거됨
+
 
 function updateCamera() {
     const myId = socket.id;
@@ -1419,7 +1416,7 @@ function drawShadows() {
 
     // 외부는 어둡게,내부는 투명하게 (도넛) -> 둥근 모서리 처리
     ctx.lineJoin = 'round';
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 1)';
     ctx.fill('evenodd');
 
     // 3. "모든 벽" 덧칠하기 (사용자 요청: 벽은 무조건 보이게)
@@ -1522,9 +1519,7 @@ function initJoystick() {
     joystickManager.on('move', (evt, data) => {
         if (data && data.vector) {
             joystickData.active = true;
-            // nipple.js vector: {x, y} unit vector.
-            // 보통 Up은 y=1 (수학적), Canvas는 Up= y=-1.
-            // 따라서 y를 반전시켜야 함.
+            // nipple.js vector: y is inverted for canvas.
             joystickData.dx = data.vector.x;
             joystickData.dy = -data.vector.y;
             joystickData.force = Math.min(data.force, 2.0);
@@ -1554,12 +1549,12 @@ function updateStatus(isConnected) {
     if (isConnected) {
         statusIndicator.style.backgroundColor = '#2ecc71';
         statusIndicator.style.boxShadow = '0 0 10px #2ecc71';
-        statusIndicator.style.boxShadow = '0 0 10px #e74c3c';
+
     }
 }
 
 // 채팅 단축키 (/)
-// 채팅 단축키 (/)
+
 window.addEventListener('keydown', (e) => {
     // 채팅창이 아닌 곳에서 / 키를 누르면 채팅창으로 포커스
     if (e.key === '/' && document.activeElement !== chatInput) {

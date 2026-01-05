@@ -8,7 +8,7 @@ const io = new Server(server);
 
 // [모듈 임포트]
 const { TILE_SIZE, MAPS, BOT_PERSONALITIES, ITEM_TYPES } = require('./config');
-const { getRandomSpawn, checkBotWallCollision, checkLineOfSight, findPath, generateBackrooms, generateMazeBig, generateOffice } = require('./utils');
+const { getRandomSpawn, checkBotWallCollision, generateBackrooms, generateMazeBig, generateOffice } = require('./utils');
 const Bot = require('./bot');
 
 app.use(express.static(__dirname));
@@ -166,7 +166,6 @@ function checkTrapCollision(playerId) {
             const tCy = trap.y + 16;
 
             const dist = Math.sqrt((pCx - tCx) ** 2 + (pCy - tCy) ** 2);
-
 
 
             // 설치자 보호
@@ -384,9 +383,7 @@ function checkCollision(moverId) {
                     // [버그 수정] 상태 변경(기절)을 즉시 클라이언트에 알림
                     io.emit('playerMoved', receiver);
                     io.emit('playerMoved', sender);
-                    // [버그 수정] 상태 변경(기절)을 즉시 클라이언트에 알림
-                    io.emit('playerMoved', receiver);
-                    io.emit('playerMoved', sender);
+
                     io.emit('updateTagger', bombHolderId); // 폭탄 소유자 변경 알림
 
                     // [추가] 폭탄 전달 이벤트 (클라이언트 시각 효과용: 화면 흔들림, 소리 등)
@@ -643,7 +640,7 @@ function resetGame() {
     bombEndTime = 0;
     bombPassCooldown = 0;
     bombEliminationOrder = []; // [추가] 탈락자 기록 초기화
-    bombPassCooldown = 0;
+
 
     // [수정] 봇 초기화 (완전 재소환)
     // 좀비 상태나 이름이 꼬이는 문제를 방지하기 위해 기존 봇을 모두 삭제하고 새로 생성
@@ -855,10 +852,6 @@ function handlePlayerMove(socket, movementData) {
 }
 
 // [추가] 아이템 획득 체크
-// [삭제됨: 중복 정의된 checkItemCollection 제거]
-
-
-
 function handleUseItem(socket) {
     const player = players[socket.id];
     if (!player) return;
@@ -1254,7 +1247,7 @@ function startBombRound() {
 
     // 새 폭탄 라운드 시작
     // 5초 대기 후 시작 (긴장감 및 거리 확보)
-    // 5초 대기 후 시작 (긴장감 및 거리 확보)
+
     io.emit('gameMessage', `⏳ 5초 뒤 폭탄이 감지됩니다! 흩어지세요!`);
 
     // [버그 수정] 시작 시 이전 폭탄 잔상 제거 (혹시 모를 초기화)
@@ -1328,7 +1321,7 @@ function updateBombGame() {
 
             if (survivors.length === 1) {
                 // 우승!
-                // 우승!
+
                 const winner = players[survivors[0]];
                 io.emit('gameMessage', `🏆 [${winner.nickname}] 최종 우승! 축하합니다!`);
 

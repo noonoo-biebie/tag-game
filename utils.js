@@ -59,56 +59,7 @@ function checkLineOfSight(x1, y1, x2, y2, mapData) {
     return true; // 뚫림
 }
 
-// BFS 경로 탐색 (Grid 기반)
-function findPath(startX, startY, endX, endY, mapData) {
-    const startC = Math.floor(startX / TILE_SIZE);
-    const startR = Math.floor(startY / TILE_SIZE);
-    const endC = Math.floor(endX / TILE_SIZE);
-    const endR = Math.floor(endY / TILE_SIZE);
 
-    if (startC === endC && startR === endR) return [];
-
-    const queue = [{ c: startC, r: startR, path: [] }];
-    const visited = new Set();
-    visited.add(`${startC},${startR} `);
-
-    // 최대 탐색 거리 제한 (너무 멀면 렉 방지)
-    let iter = 0;
-    const MAX_ITER = 300;
-
-    while (queue.length > 0) {
-        if (iter++ > MAX_ITER) break;
-
-        const { c, r, path } = queue.shift();
-
-        if (c === endC && r === endR) {
-            return path.map(p => ({ x: p.c * TILE_SIZE + TILE_SIZE / 2, y: p.r * TILE_SIZE + TILE_SIZE / 2 }));
-        }
-
-        const dirs = [
-            { dc: 0, dr: -1 }, { dc: 0, dr: 1 }, { dc: -1, dr: 0 }, { dc: 1, dr: 0 }
-        ];
-
-        const rows = mapData.length;
-        const cols = mapData[0].length;
-
-        for (const dir of dirs) {
-            const nc = c + dir.dc;
-            const nr = r + dir.dr;
-
-            if (nc >= 0 && nc < cols && nr >= 0 && nr < rows &&
-                mapData[nr][nc] === 0 && !visited.has(`${nc},${nr} `)) {
-
-                visited.add(`${nc},${nr} `);
-                queue.push({
-                    c: nc, r: nr,
-                    path: [...path, { c: nc, r: nr }]
-                });
-            }
-        }
-    }
-    return []; // 경로 없음
-}
 
 // [이름 변경] 기존 미로 알고리즘 -> MAZE_BIG (Recursive Backtracker)
 function generateMazeBig(rows, cols) {
@@ -599,7 +550,7 @@ module.exports = {
     getRandomSpawn,
     checkBotWallCollision,
     checkLineOfSight,
-    findPath,
+
     generateMazeBig,
     generateOffice,
     generateBackrooms
