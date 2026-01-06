@@ -3,7 +3,7 @@ module.exports = {
     data: (function () {
         const rows = 30; // 조금 작게
         const cols = 50;
-        const map = Array.from({ length: rows }, () => Array(cols).fill(0));
+        const map = Array.from({ length: rows }, () => Array(cols).fill(3)); // 기본 바닥: 얼음(3)
 
         // 1. 테두리 (관중석)
         for (let r = 0; r < rows; r++) {

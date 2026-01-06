@@ -818,6 +818,21 @@ function resetGame() {
         currentMapData = generateMazeBig(60, 60);
         io.emit('mapUpdate', currentMapData);
     }
+    // [Fix] 맵 변경/리셋 시 안전한 스폰 지점 재계산 (validSpawnPoints 갱신)
+    // analyzeMapConnectivity가 server.js 상단에 require 되어 있는지 확인 필요
+    // 만약 없으면 utils에서 가져와야 함.
+    validSpawnPoints = analyzeMapConnectivity(currentMapData);
+    console.log(`[Reset] Recalculated valid spawn points: ${validSpawnPoints.length}`);
+
+    // [Fix] 아이템 50개 리필 (안전한 위치에)
+    for (let i = 0; i < 50; i++) {
+        const span = getRandomSpawn(currentMapData, validSpawnPoints);
+        // 아이템 ID 생성 (간단히 좌표 기반이나 랜덤)
+        const itemId = `item_${Date.now()}_${i}`;
+        const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+        items[itemId] = { x: span.x, y: span.y, type: type };
+    }
+    io.emit('updateItems', items);
 
     // Clear timer
     if (iceCountdownTimer) {

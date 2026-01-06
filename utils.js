@@ -22,16 +22,18 @@ function getRandomSpawn(mapData, validPoints = null) {
         }
     }
 
-    // 3. 정 안되면 맵 전체를 뒤져서라도 안전한 곳(0) 하나 찾기
-    for (let rr = 0; rr < rows; rr++) {
-        for (let cc = 0; cc < cols; cc++) {
-            if (mapData[rr][cc] === 0) {
+    // 3. 정 안되면 맵 전체를 뒤져서라도 안전한 곳(0, 2, 3) 하나 찾기
+    for (let rr = 1; rr < rows - 1; rr++) {
+        for (let cc = 1; cc < cols - 1; cc++) {
+            const t = mapData[rr][cc];
+            if (t === 0 || t === 2 || t === 3) {
                 return { x: cc * TILE_SIZE, y: rr * TILE_SIZE };
             }
         }
     }
 
-    // 최후의 수단
+    // 최후의 수단 (정말 맵에 빈 곳이 하나도 없으면?? 일단 1,1 리턴하지만 로그 남김)
+    console.error("CRITICAL: No valid spawn point found on map!");
     return { x: TILE_SIZE, y: TILE_SIZE };
 }
 

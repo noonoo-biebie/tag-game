@@ -27,10 +27,10 @@ module.exports = {
             }
         }
 
-        // 피트 스탑 (중앙 관통로)
+        // 피트 스탑 (중앙 관통로) - 진흙(2)
         for (let c = centerX - 2; c <= centerX + 2; c++) {
             for (let r = centerY - innerRadius; r <= centerY + innerRadius; r++) {
-                if (Math.random() < 0.8) map[Math.floor(r)][Math.floor(c)] = 0;
+                if (Math.random() < 0.8) map[Math.floor(r)][Math.floor(c)] = 2; // Mud
             }
         }
 

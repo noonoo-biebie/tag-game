@@ -623,10 +623,10 @@ socket.on('gameMessage', (msg) => {
 
     // 버전 정보 표시 (입장 시)
     if (msg.includes('입장했습니다')) {
-        gameMessage.innerText = '달리고 잡기 v1.3.3 (Map System & Safe Spawn)';
+        gameMessage.innerText = '달리고 잡기 v1.4.1 (버그 수정 및 맵 개선)';
     }
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v1.3.3 (Map System & Safe Spawn)';
+        gameMessage.innerText = '달리고 잡기 v1.4.1 (버그 수정 및 맵 개선)';
     }, 5000);
 });
 
@@ -1841,7 +1841,7 @@ function drawHUD() {
         ctx.font = '10px Arial';
         ctx.fillStyle = '#fff';
         ctx.textAlign = 'right';
-        ctx.fillText('v1.4.0', x + boxWidth - 5, y + boxHeight - 5);
+        ctx.fillText('v1.4.1', x + boxWidth - 5, y + boxHeight - 5);
 
         ctx.font = 'bold 14px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'left';
