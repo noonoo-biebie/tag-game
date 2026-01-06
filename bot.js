@@ -100,6 +100,20 @@ class Bot {
         // 1. 미끄러짐 처리
         if (this.handleSlip(mapData)) return;
 
+        // [New] 용암(Lava) 체크
+        const centerCol = Math.floor((this.x + 16) / TILE_SIZE);
+        const centerRow = Math.floor((this.y + 16) / TILE_SIZE);
+        if (centerRow >= 0 && centerRow < mapData.length && centerCol >= 0 && centerCol < mapData[0].length) {
+            if (mapData[centerRow][centerCol] === 4) { // Lava
+                // 넉백 (진행 반대 방향으로 튕김)
+                this.x -= this.moveDir.x * 30;
+                this.y -= this.moveDir.y * 30;
+                this.stunnedUntil = Date.now() + 2000; // 2초 기절
+                // 효과음/메시지는 server.js에서 봇 상태 보고 emit 되므로 자동 처리됨 (playerMoved)
+                return;
+            }
+        }
+
         this.callbacks = callbacks; // [Fix] Callbacks init
 
         // 2. 끼임 감지 (0.5초마다)
@@ -356,7 +370,17 @@ class Bot {
     }
 
     moveToDir(mapData) {
-        const speed = this.isSpeeding ? 25 : 15;
+        let speed = this.isSpeeding ? 25 : 15;
+
+        // [New] 진흙(Mud) 체크
+        const TILE_SIZE = 32; // ensure TILE_SIZE is available or use this scope
+        const centerCol = Math.floor((this.x + 16) / TILE_SIZE);
+        const centerRow = Math.floor((this.y + 16) / TILE_SIZE);
+        if (centerRow >= 0 && centerRow < mapData.length && centerCol >= 0 && centerCol < mapData[0].length) {
+            if (mapData[centerRow][centerCol] === 2) { // Mud
+                speed *= 0.5;
+            }
+        }
 
         // X축
         let nextX = this.x + this.moveDir.x * speed;
