@@ -167,10 +167,30 @@ for (let i = 0; i < 40; i++) { // 40개의 벽 생성
 MAPS.TEMP_ZOMBIE = tempZombieMap; // 이름 변경
 MAPS.BACKROOMS = backroomsMap;    // 신규 추가
 
-module.exports = {
-    TILE_SIZE,
-    ROWS,
-    COLS,
-    BOT_PERSONALITIES,
-    ITEM_TYPES
+const TILE_IDS = {
+    EMPTY: 0,
+    WALL: 1,
+    MUD: 2,
+    ICE: 3,
+    LAVA: 4
 };
+
+// Node.js vs Browser 환경 호환
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        TILE_SIZE,
+        ROWS,
+        COLS,
+        BOT_PERSONALITIES,
+        ITEM_TYPES,
+        TILE_IDS
+    };
+} else {
+    // 브라우저: 전역 스코프에 할당
+    window.TILE_SIZE = TILE_SIZE;
+    window.ROWS = ROWS;
+    window.COLS = COLS;
+    window.BOT_PERSONALITIES = BOT_PERSONALITIES;
+    window.ITEM_TYPES = ITEM_TYPES;
+    window.TILE_IDS = TILE_IDS;
+}

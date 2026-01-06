@@ -15,11 +15,23 @@ function getRandomSpawn(mapData, validPoints = null) {
     for (let i = 0; i < 100; i++) {
         c = Math.floor(Math.random() * cols);
         r = Math.floor(Math.random() * rows);
-        if (mapData[r][c] === 0) {
+        // [Fix] 0(빈땅), 2(진흙), 3(얼음) 위에서 스폰 허용 (벽=1, 용암=4 제외)
+        const tile = mapData[r][c];
+        if (tile === 0 || tile === 2 || tile === 3) {
             return { x: c * TILE_SIZE, y: r * TILE_SIZE };
         }
     }
-    // 정 안되면 1,1 리턴
+
+    // 3. 정 안되면 맵 전체를 뒤져서라도 안전한 곳(0) 하나 찾기
+    for (let rr = 0; rr < rows; rr++) {
+        for (let cc = 0; cc < cols; cc++) {
+            if (mapData[rr][cc] === 0) {
+                return { x: cc * TILE_SIZE, y: rr * TILE_SIZE };
+            }
+        }
+    }
+
+    // 최후의 수단
     return { x: TILE_SIZE, y: TILE_SIZE };
 }
 

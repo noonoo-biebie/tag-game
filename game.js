@@ -26,7 +26,7 @@ const chatMessages = document.getElementById('chat-messages');
 const COMMAND_DATA = {
     '/reset': { desc: '🔄 게임 리셋', args: [] },
     '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag', 'bomb', 'ice'] },
-    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'SPEEDWAY', 'FOREST', 'STADIUM', 'OFFICE', 'BACKROOMS', 'MAZE_BIG'] },
+    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'SPEEDWAY', 'FOREST', 'STADIUM', 'OFFICE', 'BACKROOMS', 'MAZE_BIG', 'LAVA_RUN'] },
     '/bot': { desc: '🤖 봇 소환 [숫자]', args: [] },
     '/spec': { desc: '👻 관전 모드 토글', args: [] },
     '/kickbot': { desc: '👋 봇 전체 추방', args: [] },
@@ -258,6 +258,7 @@ let myItem = null;
 let taggerId = null;
 let gameMode = 'TAG'; // [게임 모드] TAG, ZOMBIE, BOMB
 let currentMapData = null; // [추가] 맵 데이터 저장용
+let map = null; // [Safety] 메인 렌더링용, 초기값 null 명시
 
 // [Visual FX] 화면 흔들림
 let shakeIntensity = 0;
@@ -274,6 +275,7 @@ let bombTotalDuration = 0; // [Bomb] 전체 시간
 let traps = {};
 let isSlipped = false;
 let slipVelocity = { x: 0, y: 0 };
+let playerVelocity = { x: 0, y: 0 }; // [New] 물리 이동을 위한 속도 벡터
 let showAllPlayersOnMinimap = false; // [Minimap Cheat]
 let minimapLoop = null; // [Minimap Loop]
 
@@ -920,37 +922,69 @@ socket.on('connect_error', (err) => {
     updateStatus(false);
 });
 
+// [New] 바나나 미끄러짐 처리
+socket.on('playerSlipped', (data) => {
+    isSlipped = true;
+
+    // 현재 이동 방향으로 미끄러지되, 약간의 랜덤성을 부여
+    const speed = BASE_SPEED * 1.0; // [Mod] 속도 정상화 (1.5배 제거)
+
+    let dirX = lastMoveDir.x;
+    let dirY = lastMoveDir.y;
+
+    // 정지 상태였다면 랜덤 방향
+    if (dirX === 0 && dirY === 0) {
+        const angle = Math.random() * Math.PI * 2;
+        dirX = Math.cos(angle);
+        dirY = Math.sin(angle);
+    } else {
+        // [Mod] 이동 중이었다면 방향 비틀기 제거 (직선 주행)
+    }
+
+    slipVelocity = { x: dirX * speed, y: dirY * speed };
+
+    // 일정 시간 후 해제
+    setTimeout(() => {
+        isSlipped = false;
+        slipVelocity = { x: 0, y: 0 };
+    }, data.duration || 2000);
+});
+
+// [New] 넉백 강제 동기화 (용암 등)
+socket.on('playerKnockback', (pos) => {
+    isSlipped = false; // 미끄러짐 해제
+    slipVelocity = { x: 0, y: 0 };
+
+    // 내 위치 강제 수정
+    if (players[socket.id]) {
+        players[socket.id].x = pos.x;
+        players[socket.id].y = pos.y;
+
+        myPlayer.x = pos.x;
+        myPlayer.y = pos.y;
+        myPlayer.targetX = pos.x;
+        myPlayer.targetY = pos.y;
+
+        // 이동 예측 벡터 초기화 (멈춤)
+        playerVelocity = { x: 0, y: 0 };
+        lastMoveDir = { x: 0, y: 0 };
+    }
+
+    // 화면 흔들림 효과
+    shakeIntensity = 15;
+    setTimeout(() => { shakeIntensity = 0; }, 500);
+});
+
 
 // --- 렌더링 및 게임 로직 ---
 
-const TILE_SIZE = 32;
+// TILE_SIZE는 config.js에서 로드됨
 // ROWS, COLS는 동적 맵 크기(map.length 등)를 사용하므로 제거함
 
-let map = [
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1],
-    [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1],
-    [1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1],
-    [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-];
+// [Map Init] 서버로부터 맵 데이터를 받기 전까지는 map이 null입니다.
 
 // 초기 맵(기본)에 대한 줌 설정
-(function initZoom() {
-    const mapW = map[0].length * TILE_SIZE;
-    const mapH = map.length * TILE_SIZE;
-    const scale = Math.min(canvas.width / mapW, canvas.height / mapH);
-    if (scale >= 1.0) camera.zoom = scale;
-})();
+// 초기 맵(기본)에 대한 줌 설정 제거 (mapUpdate에서 처리)
 
 function draw() {
     // 화면 클리어
@@ -980,6 +1014,7 @@ function draw() {
 }
 
 function drawMap() {
+    if (!map) return; // [Safety] 맵 로딩 전 렌더링 방지
     // 맵 전체를 순회하지 않고, 카메라에 보이는 영역만 렌더링 (Culling)
     const startCol = Math.floor(camera.x / TILE_SIZE);
     const endCol = startCol + (camera.width / TILE_SIZE) + 1;
@@ -989,13 +1024,24 @@ function drawMap() {
     for (let r = startRow; r <= endRow; r++) {
         for (let c = startCol; c <= endCol; c++) {
             if (r >= 0 && r < map.length && c >= 0 && c < map[0].length) {
-                if (map[r][c] === 1) {
+                const tile = map[r][c];
+                if (tile === 1) { // WALL
                     ctx.fillStyle = '#95a5a6';
                     ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                } else if (tile === 2) { // MUD
+                    ctx.fillStyle = '#795548'; // Brown
+                    ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                } else if (tile === 3) { // ICE
+                    ctx.fillStyle = '#afeeee'; // PaleTurquoise
+                    ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                } else if (tile === 4) { // LAVA
+                    ctx.fillStyle = '#e74c3c'; // Red
+                    // [Visual] 용암은 약간 작게 그려서 여백을 둠 (위험 느낌)
+                    const m = 2;
+                    ctx.fillRect(c * TILE_SIZE + m, r * TILE_SIZE + m, TILE_SIZE - m * 2, TILE_SIZE - m * 2);
                 } else {
-                    ctx.fillStyle = '#34495e'; // 배경색 (필요시)
-                    // 빈 공간은 캔버스 배경색이 보이도록 주석 처리하거나 설정
-                    // 최적화: 배경은 draw() 시작 시 fillRect로 한 번에 칠하는 게 나음
+                    // EMPTY (Background)
+                    ctx.fillStyle = '#34495e';
                     ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
             }
@@ -1248,6 +1294,7 @@ window.addEventListener('keyup', (e) => {
 });
 
 function checkWallCollision(newX, newY) {
+    if (!map) return true; // [Safety] 맵 로딩 전 이동 불가
     const padding = 4;
     const box = {
         left: newX + padding,
@@ -1276,6 +1323,7 @@ let lastEmitTime = 0;
 let isStunned = false; // [추가] 기절 상태
 
 function processInput(deltaTimeSec) {
+    if (!map) return; // [Safety] 맵 없으면 입력 무시
     if (!isJoined || !players[socket.id]) return;
 
     // [기절 체크] (태그 당함 OR 좀비 감염)
@@ -1285,104 +1333,163 @@ function processInput(deltaTimeSec) {
     // [Refinement] 얼음 상태 이동 차단 (클라이언트)
     if (players[socket.id].isFrozen) return;
 
-    let dx = 0; let dy = 0;
+    // 1. 입력 벡터 계산 (Input Vector)
+    let inputDx = 0; let inputDy = 0;
 
     if (isSlipped) {
-        // 미끄러지는 중: 키 입력 무시, 강제 이동
-        dx = slipVelocity.x;
-        dy = slipVelocity.y;
+        // 미끄러짐(바나나) 상태: 입력 무시
     } else if (joystickData.active) {
-        // 조이스틱 입력 우선
-        dx = joystickData.dx;
-        dy = joystickData.dy;
-        // 조이스틱은 이미 정규화된 벡터(vector.x, vector.y)를 주거나 force에 따라 다를 수 있음.
-        // nipple.js vector is normalized unit vector direction.
-        // We can multiply speed by force if we want analog speed control, 
-        // but for now let's keep it max speed for simplicity, or simple threshold.
+        inputDx = joystickData.dx;
+        inputDy = joystickData.dy;
     } else {
-        // 키보드/정상 상태
-        if (keys['arrowup'] || keys['w']) dy = -1;
-        if (keys['arrowdown'] || keys['s']) dy = 1;
-        if (keys['arrowleft'] || keys['a']) dx = -1;
-        if (keys['arrowright'] || keys['d']) dx = 1;
+        if (keys['arrowup'] || keys['w']) inputDy = -1;
+        if (keys['arrowdown'] || keys['s']) inputDy = 1;
+        if (keys['arrowleft'] || keys['a']) inputDx = -1;
+        if (keys['arrowright'] || keys['d']) inputDx = 1;
 
-        if (dx !== 0 && dy !== 0) {
-            const len = Math.sqrt(dx * dx + dy * dy);
-            dx /= len; dy /= len;
+        // 정규화
+        if (inputDx !== 0 && inputDy !== 0) {
+            const len = Math.sqrt(inputDx * inputDx + inputDy * inputDy);
+            inputDx /= len; inputDy /= len;
         }
     }
 
     const myPlayer = players[socket.id];
 
-    if (dx !== 0 || dy !== 0) {
-        // [추가] 이동 중이라면 마지막 방향 갱신
-        lastMoveDir = { x: dx, y: dy };
+    // 2. 현재 타일 확인 (Check Tile)
+    const centerX = myPlayer.x + TILE_SIZE / 2;
+    const centerY = myPlayer.y + TILE_SIZE / 2;
+    const col = Math.floor(centerX / TILE_SIZE);
+    const row = Math.floor(centerY / TILE_SIZE);
 
-        // 속도 아이템 적용
-        let currentSpeed = BASE_SPEED * speedMultiplier;
-        let remainingDist = currentSpeed * deltaTimeSec;
+    let isOnIce = false;
+    let isOnMud = false;
+
+    if (map && row >= 0 && row < map.length && col >= 0 && col < map[0].length) {
+        const tile = map[row][col];
+        if (tile === 3) isOnIce = true; // ICE
+        if (tile === 2) isOnMud = true; // MUD
+    }
+
+    // 3. 물리 엔진 적용 (Physics)
+    const targetSpeed = BASE_SPEED * speedMultiplier * (isOnMud ? 0.5 : 1.0); // 진흙이면 느려짐
+
+    if (isSlipped) {
+        // [특수] 바나나 미끄러짐
+        playerVelocity.x = slipVelocity.x;
+        playerVelocity.y = slipVelocity.y;
+    }
+    else if (isOnIce) {
+        // [ICE] 관성 이동 (Acceleration + Low Friction)
+        const ACCEL = 1500; // 가속도
+        const FRICTION = 0.96; // 마찰력 (1에 가까울수록 미끄러움)
+
+        // 입력이 있으면 가속
+        playerVelocity.x += inputDx * ACCEL * deltaTimeSec;
+        playerVelocity.y += inputDy * ACCEL * deltaTimeSec;
+
+        // 마찰 적용
+        playerVelocity.x *= FRICTION;
+        playerVelocity.y *= FRICTION;
+
+        // 최대 속도 제한
+        const currentSpeed = Math.sqrt(playerVelocity.x ** 2 + playerVelocity.y ** 2);
+        const MAX_ICE_SPEED = targetSpeed * 1.5;
+        if (currentSpeed > MAX_ICE_SPEED) {
+            playerVelocity.x = (playerVelocity.x / currentSpeed) * MAX_ICE_SPEED;
+            playerVelocity.y = (playerVelocity.y / currentSpeed) * MAX_ICE_SPEED;
+        }
+
+        // 정지 처리
+        if (currentSpeed < 5 && inputDx === 0 && inputDy === 0) {
+            playerVelocity.x = 0;
+            playerVelocity.y = 0;
+        }
+    }
+    else {
+        // [NORMAL] 즉시 반응 (Direct Control)
+        if (inputDx === 0 && inputDy === 0) {
+            playerVelocity.x = 0;
+            playerVelocity.y = 0;
+        } else {
+            playerVelocity.x = inputDx * targetSpeed;
+            playerVelocity.y = inputDy * targetSpeed;
+        }
+    }
+
+    // 4. 이동 실행 (Collision Handling)
+    const velocityMag = Math.sqrt(playerVelocity.x ** 2 + playerVelocity.y ** 2);
+
+    if (velocityMag > 0) {
+        let remainingDist = velocityMag * deltaTimeSec;
+        const moveDirX = playerVelocity.x / velocityMag;
+        const moveDirY = playerVelocity.y / velocityMag;
+
+        // [추가] 마지막 방향 갱신
+        lastMoveDir = { x: moveDirX, y: moveDirY };
+
         const STEP_SIZE = 4;
-        let hitWall = false; // 벽 충돌 여부 체크
+        let hitWall = false; // [Fix] 변수 선언 복구
 
         while (remainingDist > 0) {
             const step = Math.min(remainingDist, STEP_SIZE);
             remainingDist -= step;
-            let nextX = myPlayer.x + dx * step;
-            let nextY = myPlayer.y + dy * step;
 
-            let movedX = false;
-            let movedY = false;
+            let nextX = myPlayer.x + moveDirX * step;
+            let nextY = myPlayer.y + moveDirY * step;
 
-            // [관전자] 벽 충돌 무시 (단, 맵 밖으로는 이동 불가)
+            // [관전자] 벽 충돌 무시
             if (myPlayer.isSpectator) {
                 const mapWidth = map[0].length * 32;
-                if (nextX >= 0 && nextX <= mapWidth - 32) {
-                    myPlayer.x = nextX;
-                    movedX = true;
-                }
-            } else {
-                if (!checkWallCollision(nextX, myPlayer.y)) {
-                    myPlayer.x = nextX;
-                    movedX = true;
-                }
-            }
-
-            if (myPlayer.isSpectator) {
                 const mapHeight = map.length * 32;
-                if (nextY >= 0 && nextY <= mapHeight - 32) {
-                    myPlayer.y = nextY;
-                    movedY = true;
+
+                if (isSlipped && hitWall) {
+                    isSlipped = false;
+                    slipVelocity = { x: 0, y: 0 };
+                    // (옵션) 효과음이나 파티클 추가 가능
                 }
+
+                myPlayer.targetX = myPlayer.x;
+                myPlayer.targetY = myPlayer.y;
+                myPlayer.targetX = myPlayer.x;
+                myPlayer.targetY = myPlayer.y;
             } else {
-                if (!checkWallCollision(myPlayer.x, nextY)) {
-                    myPlayer.y = nextY;
-                    movedY = true;
+                // [Normal] 일반 플레이어 충돌 체크
+                let collidedX = checkWallCollision(nextX, myPlayer.y);
+                if (!collidedX) {
+                    myPlayer.x = nextX;
+                } else {
+                    hitWall = true;
+                    if (isOnIce) playerVelocity.x *= -0.5; // 반동
+                }
+
+                let nextY_Consolidated = myPlayer.y + moveDirY * step;
+                let collidedY = checkWallCollision(myPlayer.x, nextY_Consolidated);
+                if (!collidedY) {
+                    myPlayer.y = nextY_Consolidated;
+                } else {
+                    hitWall = true;
+                    if (isOnIce) playerVelocity.y *= -0.5; // 반동
                 }
             }
 
-            // 미끄러지는 상태에서 벽에 부딪히면(이동 실패하면) 즉시 정지
-            if (isSlipped && (!movedX || !movedY)) {
-                hitWall = true;
-                break;
+            // [New] 미끄러지는 상태에서 벽에 부딪히면 즉시 정지
+            if (isSlipped && hitWall) {
+                isSlipped = false;
+                slipVelocity = { x: 0, y: 0 };
+                // (옵션) 효과음이나 파티클 추가 가능
+                break; // 루프 중단
+            }
+
+            const now = Date.now();
+            if (now - lastEmitTime > 30) {
+                socket.emit('playerMove', { x: myPlayer.x, y: myPlayer.y });
+                lastEmitTime = now;
             }
         }
-
-        if (isSlipped && hitWall) {
-            isSlipped = false;
-            slipVelocity = { x: 0, y: 0 };
-            // (옵션) 효과음이나 파티클 추가 가능
-        }
-
-        myPlayer.targetX = myPlayer.x;
-        myPlayer.targetY = myPlayer.y;
-    }
-
-    const now = Date.now();
-    if (now - lastEmitTime > 30) {
-        socket.emit('playerMove', { x: myPlayer.x, y: myPlayer.y });
-        lastEmitTime = now;
     }
 }
+// [End of processInput]
 
 let lastTime = 0;
 let loopRunning = false;
@@ -1480,11 +1587,11 @@ function update(timestamp) {
 /*
 function draw() {
     // ... existing drawing code ...
-
+ 
     // 아이템 슬롯 (UI는 카메라 영향을 받지 않음 -> restore 후 그림)
     drawInventory();
     drawHUD(); // This line would be added here.
-
+ 
     // If draw() itself was meant to loop, this would be here, but it's in update()
     // requestAnimationFrame(draw);
 }

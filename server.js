@@ -5,6 +5,11 @@ const server = http.createServer(app);
 const { Server } = require("socket.io");
 const io = new Server(server);
 
+// [Safety] Global Error Handler
+process.on('uncaughtException', (err) => {
+    console.error('🔥 [CRITICAL] Uncaught Exception:', err);
+});
+
 
 // [모듈 임포트]
 const { TILE_SIZE, BOT_PERSONALITIES, ITEM_TYPES } = require('./config');
@@ -225,6 +230,107 @@ function checkTrapCollision(playerId) {
         }
     } catch (e) {
         console.error("TrapError:", e);
+    }
+}
+
+// [New] 타일 상호작용 (용암 등)
+function checkTileInteraction(playerId) {
+    try {
+        const player = players[playerId];
+        if (!player) return;
+        if (player.isSpectator) return; // 관전자는 무적
+
+        // 현재 맵 데이터 확인
+        if (!currentMapData || !currentMapData.length) return;
+
+        // [Enhanced] 4점 + 중심점 체크 (더 민감하게 반응)
+        const TILE_SIZE = 32;
+        const padding = 10; // 안쪽으로 10px 들어온 지점 체크
+
+        const checkPoints = [
+            { x: player.x + 16, y: player.y + 16 }, // Center
+            { x: player.x + padding, y: player.y + 16 }, // Left
+            { x: player.x + 32 - padding, y: player.y + 16 }, // Right
+            { x: player.x + 16, y: player.y + padding }, // Top
+            { x: player.x + 16, y: player.y + 32 - padding } // Bottom
+        ];
+
+        let touchedLava = false;
+
+        for (const p of checkPoints) {
+            const c = Math.floor(p.x / TILE_SIZE);
+            const r = Math.floor(p.y / TILE_SIZE);
+
+            if (r >= 0 && r < currentMapData.length && c >= 0 && c < currentMapData[0].length) {
+                if (currentMapData[r][c] === 4) {
+                    touchedLava = true;
+                    break;
+                }
+            }
+        }
+
+        if (touchedLava) {
+            // 이미 기절 상태면 중복 처리 방지
+            if (player.stunnedUntil && Date.now() < player.stunnedUntil) return;
+
+            // [Knockback] 벽을 뚫지 않는 안전한 넉백 (Wall-Aware Knockback)
+            if (player.lastX !== undefined && player.lastY !== undefined) {
+                const dx = player.lastX - player.x;
+                const dy = player.lastY - player.y;
+
+                // 시도 1: 강력한 넉백 (5배)
+                let pushFactor = 5.0;
+                let targetX = player.lastX + dx * pushFactor;
+                let targetY = player.lastY + dy * pushFactor;
+
+                // 타일 판별 헬퍼 (Bounding Box Check)
+                const isWall = (x, y) => {
+                    const padding = 2; // 여유 공간
+                    const checkPoints = [
+                        { x: x + padding, y: y + padding },          // Left-Top
+                        { x: x + 32 - padding, y: y + padding },     // Right-Top
+                        { x: x + padding, y: y + 32 - padding },     // Left-Bottom
+                        { x: x + 32 - padding, y: y + 32 - padding } // Right-Bottom
+                    ];
+
+                    for (const p of checkPoints) {
+                        const c = Math.floor(p.x / TILE_SIZE);
+                        const r = Math.floor(p.y / TILE_SIZE);
+                        if (r >= 0 && r < currentMapData.length && c >= 0 && c < currentMapData[0].length) {
+                            if (currentMapData[r][c] === 1) return true; // Wall 충돌
+                        }
+                    }
+                    return false;
+                };
+
+                // 목표 지점이 벽이면, 거리를 줄여서 재시도
+                if (isWall(targetX, targetY)) {
+                    pushFactor = 2.0; // 약한 넉백
+                    targetX = player.lastX + dx * pushFactor;
+                    targetY = player.lastY + dy * pushFactor;
+
+                    if (isWall(targetX, targetY)) {
+                        // 이것도 벽이면 그냥 직전 위치(Safe Zone)로 복귀
+                        targetX = player.lastX;
+                        targetY = player.lastY;
+                    }
+                }
+
+                player.x = targetX;
+                player.y = targetY;
+
+                // [Force Sync]
+                io.to(playerId).emit('playerKnockback', { x: player.x, y: player.y });
+                io.emit('playerMoved', player);
+            }
+
+            // [Stun] 기절 시간 (2초)
+            player.stunnedUntil = Date.now() + 2000;
+
+            io.emit('gameMessage', `🔥 [${player.nickname}] 님이 용암에 빠져 튕겨나갔습니다!`);
+        }
+    } catch (e) {
+        console.error("[TileDetectError]", e);
     }
 }
 
@@ -931,40 +1037,48 @@ function handleJoinGame(socket, data) {
 }
 
 function handlePlayerMove(socket, movementData) {
-    // [기절 체크]
-    // [기절 체크]
-    if (players[socket.id] && players[socket.id].stunnedUntil && Date.now() < players[socket.id].stunnedUntil) {
-        return;
-    }
+    try {
+        const player = players[socket.id];
+        if (!player) return;
 
-    // [Refinement] 얼음 상태 이동 차단 (완전 정지)
-    // [Refinement] 얼음 상태 이동 차단 (완전 정지)
-    if (players[socket.id] && players[socket.id].isFrozen) {
-        // 얼음 상태에서는 위치 업데이트도 막아야 함 (클라이언트 예측 이동 롤백 유도)
-        return;
-    }
+        // [기절 체크]
+        // [Correction] 기절 상태면 위치 리셋하고 중단
+        if ((player.stunnedUntil && Date.now() < player.stunnedUntil) || player.isFrozen) {
+            socket.emit('playerMoved', player);
+            return;
+        }
 
-    const player = players[socket.id];
-    if (player) {
-        // [통계] 인간 상태일 때 이동 거리 누적 (관전자 제외)
+        // [통계]
         if (!player.isZombie && !player.isSpectator && player.stats) {
             const dx = movementData.x - player.x;
             const dy = movementData.y - player.y;
             player.stats.distance += Math.hypot(dx, dy);
         }
 
+        // [Move] 좌표 업데이트 전 이전 위치 저장 (넉백용)
+        player.lastX = player.x;
+        player.lastY = player.y;
+
         player.x = movementData.x;
         player.y = movementData.y;
+
+        // [Logic Priority 1] 타일 상호작용 (용암 넉백 등 위치 수정 가능성 있음)
+        checkTileInteraction(socket.id);
+
+        // [Logic Priority 2] 확정된 위치 전송 (넉백 반영됨)
         io.emit('playerMoved', player);
+
+        // [Logic Priority 3] 나머지 판정
         checkCollision(socket.id);
 
-        // [New] 얼음땡 모드 땡(Thaw) 체크 - 이동할 때마다 체크
         if (gameMode === 'ICE') {
             checkIceThaw(socket.id);
         }
 
         checkItemCollection(socket.id);
         checkTrapCollision(socket.id);
+    } catch (error) {
+        console.error(`[MoveError] ${socket.id}:`, error);
     }
 }
 
