@@ -1827,12 +1827,21 @@ function drawHUD() {
         const boxHeight = 110;
         const x = canvas.width - boxWidth - padding;
         const y = padding;
+        // [DEBUG] Info
+        // ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        // ctx.fillRect(x, y, 160, 90);
 
         ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
         ctx.strokeStyle = '#3498db'; // Blue for Ice
         ctx.lineWidth = 2;
         ctx.fillRect(x, y, boxWidth, boxHeight);
         ctx.strokeRect(x, y, boxWidth, boxHeight);
+
+        // Version Info (Over the box)
+        ctx.font = '10px Arial';
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'right';
+        ctx.fillText('v1.4.0', x + boxWidth - 5, y + boxHeight - 5);
 
         ctx.font = 'bold 14px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'left';
