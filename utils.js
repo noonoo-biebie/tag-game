@@ -16,8 +16,9 @@ function getRandomSpawn(mapData, validPoints = null) {
         c = Math.floor(Math.random() * cols);
         r = Math.floor(Math.random() * rows);
         // [Fix] 0(빈땅), 2(진흙), 3(얼음) 위에서 스폰 허용 (벽=1, 용암=4 제외)
+        // [Fix] 블랙리스트 방식: 벽(1)과 용암(4)만 아니면 스폰 가능
         const tile = mapData[r][c];
-        if (tile === 0 || tile === 2 || tile === 3) {
+        if (tile !== 1 && tile !== 4) {
             return { x: c * TILE_SIZE, y: r * TILE_SIZE };
         }
     }
@@ -26,7 +27,8 @@ function getRandomSpawn(mapData, validPoints = null) {
     for (let rr = 1; rr < rows - 1; rr++) {
         for (let cc = 1; cc < cols - 1; cc++) {
             const t = mapData[rr][cc];
-            if (t === 0 || t === 2 || t === 3) {
+            // [Fix] 블랙리스트 방식
+            if (t !== 1 && t !== 4) {
                 return { x: cc * TILE_SIZE, y: rr * TILE_SIZE };
             }
         }
@@ -47,7 +49,9 @@ function analyzeMapConnectivity(mapData) {
 
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-            if (mapData[r][c] === 0 && !visited[r][c]) {
+            // [Fix] 0(Empty), 2(Mud), 3(Ice) 모두 체크
+            const tile = mapData[r][c];
+            if ((tile === 0 || tile === 2 || tile === 3) && !visited[r][c]) {
                 // 새로운 영역 발견 -> 탐색 시작
                 const regionPoints = [];
                 const queue = [{ r, c }];
@@ -66,7 +70,9 @@ function analyzeMapConnectivity(mapData) {
                         const nc = curr.c + d.c;
 
                         if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
-                            if (mapData[nr][nc] === 0 && !visited[nr][nc]) {
+                            // [Fix] 0(Empty), 2(Mud), 3(Ice) 모두 이동 가능 영역으로 간주
+                            const nextTile = mapData[nr][nc];
+                            if ((nextTile === 0 || nextTile === 2 || nextTile === 3) && !visited[nr][nc]) {
                                 visited[nr][nc] = true;
                                 regionPoints.push({ r: nr, c: nc });
                                 queue.push({ r: nr, c: nc });

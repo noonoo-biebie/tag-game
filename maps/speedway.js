@@ -27,10 +27,16 @@ module.exports = {
             }
         }
 
-        // 피트 스탑 (중앙 관통로) - 진흙(2)
+        // 피트 스탑 (중앙 관통로) - 빈 공간(0)이 메인, 가끔 진흙(2)
         for (let c = centerX - 2; c <= centerX + 2; c++) {
             for (let r = centerY - innerRadius; r <= centerY + innerRadius; r++) {
-                if (Math.random() < 0.8) map[Math.floor(r)][Math.floor(c)] = 2; // Mud
+                // 기존: 80% Mud, 20% Wall
+                // 변경: 80% Empty, 20% Mud
+                if (Math.random() < 0.8) {
+                    map[Math.floor(r)][Math.floor(c)] = 0; // Empty
+                } else {
+                    map[Math.floor(r)][Math.floor(c)] = 2; // Mud
+                }
             }
         }
 
