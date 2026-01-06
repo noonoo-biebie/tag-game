@@ -26,7 +26,7 @@ const chatMessages = document.getElementById('chat-messages');
 const COMMAND_DATA = {
     '/reset': { desc: '🔄 게임 리셋', args: [] },
     '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag', 'bomb', 'ice'] },
-    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'OPEN', 'ZOMBIE', 'OFFICE', 'BACKROOMS', 'MAZE_BIG'] },
+    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'SPEEDWAY', 'FOREST', 'STADIUM', 'OFFICE', 'BACKROOMS', 'MAZE_BIG'] },
     '/bot': { desc: '🤖 봇 소환 [숫자]', args: [] },
     '/spec': { desc: '👻 관전 모드 토글', args: [] },
     '/kickbot': { desc: '👋 봇 전체 추방', args: [] },
@@ -621,10 +621,10 @@ socket.on('gameMessage', (msg) => {
 
     // 버전 정보 표시 (입장 시)
     if (msg.includes('입장했습니다')) {
-        gameMessage.innerText = '달리고 잡기 v1.3.2 (얼음땡 봇 추가!)';
+        gameMessage.innerText = '달리고 잡기 v1.3.3 (Map System & Safe Spawn)';
     }
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v1.3.2 (얼음땡 봇 추가!)';
+        gameMessage.innerText = '달리고 잡기 v1.3.3 (Map System & Safe Spawn)';
     }, 5000);
 });
 

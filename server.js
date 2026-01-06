@@ -7,8 +7,11 @@ const io = new Server(server);
 
 
 // [모듈 임포트]
-const { TILE_SIZE, MAPS, BOT_PERSONALITIES, ITEM_TYPES } = require('./config');
-const { getRandomSpawn, checkBotWallCollision, generateBackrooms, generateMazeBig, generateOffice } = require('./utils');
+const { TILE_SIZE, BOT_PERSONALITIES, ITEM_TYPES } = require('./config');
+const { getRandomSpawn, checkBotWallCollision, analyzeMapConnectivity } = require('./utils');
+const { loadMaps } = require('./map_loader');
+
+
 const Bot = require('./bot');
 
 app.use(express.static(__dirname));
@@ -26,8 +29,16 @@ app.get('/ping', (req, res) => {
 let players = {};
 let taggerId = null;
 let lastTaggerId = null; // 최근 술래 (봇 반격 방지용)
+// 맵 로드
+const MAPS_MODULE = loadMaps();
+console.log(`[Server] Maps loaded: ${Object.keys(MAPS_MODULE).join(', ')}`);
+
 let currentMapName = 'DEFAULT';
-let currentMapData = MAPS.DEFAULT;
+let currentMapData = MAPS_MODULE.DEFAULT.data;
+// [New] 안전 스폰 좌표 캐시
+let validSpawnPoints = analyzeMapConnectivity(currentMapData);
+
+
 let gameMode = 'TAG'; // [복구] 게임 모드 변수 선언 (TAG/ZOMBIE)
 let roundTime = 0;
 let roundTimer = null;
@@ -60,8 +71,15 @@ function spawnItem() {
         delete items[oldestId];
     }
 
-    const pos = getRandomSpawn(currentMapData);
+    if (Object.keys(items).length >= maxItems) {
+        // 가장 오래된 아이템 삭제
+        const oldestId = Object.keys(items).sort((a, b) => a - b)[0];
+        delete items[oldestId];
+    }
+
+    const pos = getRandomSpawn(currentMapData, validSpawnPoints);
     const id = itemNextId++;
+
 
     let availableTypes = ITEM_TYPES;
     // [New] 얼음땡 모드에서는 실드 제외 (밸런스)
@@ -556,7 +574,15 @@ function startRoundTimer(seconds) {
 function createBot() {
     // [버그 수정] Date.now() 중복 방지를 위해 난수 추가
     const botId = 'bot_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    // [Safety] 봇 생성 시 안전 좌표 강제 적용
+    const spawn = getRandomSpawn(currentMapData, validSpawnPoints);
+
+    // Bot 생성자에 좌표 전달 불가 시, 생성 후 덮어쓰기
     const bot = new Bot(botId, currentMapData);
+    bot.x = spawn.x;
+    bot.y = spawn.y;
+    bot.targetX = spawn.x;
+    bot.targetY = spawn.y;
 
     // [통계] 봇 통계 초기화
     bot.stats = { distance: 0, infectionCount: 0, survivalTime: 0 };
@@ -714,7 +740,7 @@ function resetGame() {
     // 플레이어 재배치 (봇은 제외됨)
     for (const id in players) {
         const p = players[id];
-        const spawn = getRandomSpawn(currentMapData);
+        const spawn = getRandomSpawn(currentMapData, validSpawnPoints);
         p.x = spawn.x;
         p.y = spawn.y;
         p.targetX = p.x;
@@ -1179,54 +1205,60 @@ function handleChatMessage(socket, msg) {
         const inputName = cmd.split(' ')[1];
         if (inputName) {
             const mapKey = inputName.toUpperCase();
-            let isRandom = false;
 
-            if (mapKey === 'BACKROOMS') {
-                console.log('[MapGen] Backrooms(Level 0) 생성 시작...');
+            if (MAPS_MODULE[mapKey]) {
+                const mapObj = MAPS_MODULE[mapKey];
+                console.log(`[MapGen] Switching to map: ${mapKey}`);
+
                 try {
-                    const newMap = generateBackrooms(60, 60);
-                    if (!newMap || !newMap.length) throw new Error("맵 생성 실패 (결과 없음)");
-                    currentMapName = 'BACKROOMS';
-                    currentMapData = newMap;
-                    isRandom = true;
-                    console.log(`[MapGen] 생성 완료: ${currentMapData.length}x${currentMapData[0].length}`);
+                    let newMapData;
+                    let isRandom = false;
+
+                    if (mapObj.generate) {
+                        // 생성형 맵
+                        console.log(`[MapGen] Generating ${mapKey}...`);
+                        newMapData = mapObj.generate(60, 60); // 기본 크기 60x60
+                        isRandom = true;
+                    } else if (mapObj.data) {
+                        // 정적 맵
+                        newMapData = mapObj.data;
+                    } else {
+                        throw new Error("Invalid map module structure");
+                    }
+
+                    if (!newMapData || !newMapData.length) throw new Error("Map data invalid");
+
+                    currentMapName = mapKey;
+                    currentMapData = newMapData;
+
+                    // 모든 플레이어/봇 재배치 및 리셋
+                    resetGame();
+                    io.emit('mapUpdate', currentMapData);
+
+                    let mapMsg = `🗺️ 맵이 [${currentMapName}]으로 변경되었습니다!`;
+                    if (isRandom) mapMsg += " (♻️ 랜덤 구조 생성)";
+
+                    // [New] 맵별 특수 메시지 (설명)
+                    if (currentMapName === 'SPEEDWAY') mapMsg += " - 🏎️ 질주 본능!";
+                    if (currentMapName === 'FOREST') mapMsg += " - 🌲 숲 속의 술래잡기";
+                    if (currentMapName === 'STADIUM') mapMsg += " - ⚽ 넓은 운동장";
+
+                    io.emit('gameMessage', mapMsg);
+                    io.emit('chatMessage', { nickname: 'System', message: mapMsg, playerId: 'system' });
+
                 } catch (e) {
                     console.error('[MapGen] Error:', e);
-                    socket.emit('chatMessage', { nickname: 'System', message: `맵 생성 오류: ${e.message}`, playerId: 'system' });
-                    return;
+                    socket.emit('chatMessage', { nickname: 'System', message: `맵 변경 오류: ${e.message}`, playerId: 'system' });
                 }
-            } else if (mapKey === 'OFFICE') {
-                console.log('[MapGen] Office 생성 시작...');
-                currentMapName = 'OFFICE';
-                currentMapData = generateOffice(60, 60);
-                isRandom = true;
-            } else if (mapKey === 'MAZE_BIG') {
-                currentMapName = 'MAZE_BIG';
-                currentMapData = generateMazeBig(60, 60); // 기존 거대 미로
-                isRandom = true;
-            } else if (MAPS[mapKey]) {
-                currentMapName = mapKey;
-                currentMapData = MAPS[currentMapName];
             } else {
-                const availMaps = Object.keys(MAPS).join(', ');
+                const availMaps = Object.keys(MAPS_MODULE).join(', ');
                 const errMsg = `존재하지 않는 맵입니다. 사용 가능: ${availMaps}`;
                 socket.emit('chatMessage', { nickname: 'System', message: errMsg, playerId: 'system' });
-                return;
             }
-
-            // 모든 플레이어/봇 재배치 및 리셋
-            resetGame();
-
-            io.emit('mapUpdate', currentMapData);
-
-            let mapMsg = `🗺️ 맵이 [${currentMapName}]으로 변경되었습니다!`;
-            if (isRandom) mapMsg += " (♻️ 랜덤 구조 생성)";
-
-            io.emit('gameMessage', mapMsg);
-            io.emit('chatMessage', { nickname: 'System', message: mapMsg, playerId: 'system' });
         }
         return;
     }
+
 
     if (cmd === '/help' || cmd === '/명령어' || cmd === '/?') {
         const helpMsg = '<br>📜 <b>명령어 목록</b><br>' +

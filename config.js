@@ -172,6 +172,5 @@ module.exports = {
     ROWS,
     COLS,
     BOT_PERSONALITIES,
-    ITEM_TYPES,
-    MAPS
+    ITEM_TYPES
 };

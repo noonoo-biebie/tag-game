@@ -1,15 +1,84 @@
 const { TILE_SIZE } = require('./config');
 
-// 랜덤 스폰 위치 반환
-function getRandomSpawn(mapData) {
+// 랜덤 스폰 위치 반환 (Safe Spawn v2)
+function getRandomSpawn(mapData, validPoints = null) {
+    // 1. 미리 계산된 안전 구역이 있으면 거기서 뽑기 (O(1))
+    if (validPoints && validPoints.length > 0) {
+        const p = validPoints[Math.floor(Math.random() * validPoints.length)];
+        return { x: p.c * TILE_SIZE, y: p.r * TILE_SIZE };
+    }
+
+    // 2. Fallback: 기존 랜덤 서치 (최대 100번 시도)
     const rows = mapData.length;
     const cols = mapData[0].length;
     let x, y, r, c;
-    do {
+    for (let i = 0; i < 100; i++) {
         c = Math.floor(Math.random() * cols);
         r = Math.floor(Math.random() * rows);
-    } while (mapData[r][c] === 1); // 벽이 아닐 때까지 반복
-    return { x: c * TILE_SIZE, y: r * TILE_SIZE };
+        if (mapData[r][c] === 0) {
+            return { x: c * TILE_SIZE, y: r * TILE_SIZE };
+        }
+    }
+    // 정 안되면 1,1 리턴
+    return { x: TILE_SIZE, y: TILE_SIZE };
+}
+
+// [New] 맵 연결성 분석 (Flood Fill)
+// 가장 큰 빈 공간 덩어리를 찾아, 그 안의 좌표들만 반환함
+function analyzeMapConnectivity(mapData) {
+    const rows = mapData.length;
+    const cols = mapData[0].length;
+    const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
+    const regions = [];
+
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (mapData[r][c] === 0 && !visited[r][c]) {
+                // 새로운 영역 발견 -> 탐색 시작
+                const regionPoints = [];
+                const queue = [{ r, c }];
+                visited[r][c] = true;
+                regionPoints.push({ r, c });
+
+                let head = 0;
+                while (head < queue.length) {
+                    const curr = queue[head++];
+                    const dirs = [
+                        { r: 1, c: 0 }, { r: -1, c: 0 }, { r: 0, c: 1 }, { r: 0, c: -1 }
+                    ];
+
+                    for (const d of dirs) {
+                        const nr = curr.r + d.r;
+                        const nc = curr.c + d.c;
+
+                        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                            if (mapData[nr][nc] === 0 && !visited[nr][nc]) {
+                                visited[nr][nc] = true;
+                                regionPoints.push({ r: nr, c: nc });
+                                queue.push({ r: nr, c: nc });
+                            }
+                        }
+                    }
+                }
+                regions.push(regionPoints);
+            }
+        }
+    }
+
+    if (regions.length === 0) return [];
+
+    // 가장 큰 영역 선택
+    regions.sort((a, b) => b.length - a.length);
+    const mainRegion = regions[0];
+
+    console.log(`[MapAnalysis] Found ${regions.length} regions. Main region size: ${mainRegion.length} tiles.`);
+
+    // 만약 메인 영역이 너무 작다면(예: 10칸 미만), 맵이 이상한 것임.
+    if (mainRegion.length < 10) {
+        console.warn('[MapAnalysis] Warning: Main region is very small!');
+    }
+
+    return mainRegion;
 }
 
 // 봇 충돌 체크 (BOUNDING BOX - 여유 공간 추가)
@@ -548,10 +617,7 @@ function generateBackrooms(rows, cols) {
 
 module.exports = {
     getRandomSpawn,
+    analyzeMapConnectivity, // [Export]
     checkBotWallCollision,
-    checkLineOfSight,
-
-    generateMazeBig,
-    generateOffice,
-    generateBackrooms
+    checkLineOfSight
 };
