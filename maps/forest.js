@@ -1,5 +1,6 @@
 module.exports = {
     name: 'FOREST',
+    allowedSizes: ['M', 'L'],
     generate: function (rows = 60, cols = 60) {
         // [컨셉] 뻥 뚫려있지만 나무(장애물)가 불규칙하게 많은 맵
         const map = Array.from({ length: rows }, () => Array(cols).fill(0));

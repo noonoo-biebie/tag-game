@@ -1,5 +1,6 @@
 module.exports = {
     name: 'MUD_RUN',
+    allowedSizes: ['M', 'L'],
     generate: function (rows = 60, cols = 60) {
         // [컨셉] 진흙탕 달리기 (자연스러운 웅덩이)
         // 0: 흙길, 1: 숲(벽), 2: 진흙 웅덩이

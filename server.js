@@ -3,7 +3,12 @@ const app = express();
 const http = require('http');
 const server = http.createServer(app);
 const { Server } = require("socket.io");
-const io = new Server(server);
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 
 // [Safety] Global Error Handler
 process.on('uncaughtException', (err) => {
@@ -12,9 +17,42 @@ process.on('uncaughtException', (err) => {
 
 
 // [모듈 임포트]
-const { TILE_SIZE, BOT_PERSONALITIES, ITEM_TYPES } = require('./config');
-const { getRandomSpawn, checkBotWallCollision, analyzeMapConnectivity } = require('./utils');
-const { loadMaps } = require('./map_loader');
+const {
+    PORT,
+    ROWS,
+    COLS,
+    TILE_IDS,
+    ITEM_TYPES,
+    COLORS,
+    PLAYER_SPEED,
+    SERVER_TICK_RATE,
+    WS_TICK_RATE,
+    ITEM_SPAWN_INTERVAL,
+    MAP_SIZES // [추가]
+} = require('./config');
+
+const mapLoader = require('./map_loader'); // [변경] 전체 모듈 가져오기
+const MAPS_MODULE = mapLoader.loadMaps(); // [유지] 호환성 위해 이름 유지하되, 아래 로직에서 mapLoader 사용 권장
+
+// [Fix] 유틸리티 함수 임포트 (누락되어 서버 크래시 발생)
+const { getRandomSpawn, analyzeMapConnectivity } = require('./utils');
+
+// [New] Socket Listener for Voting
+io.on('connection', (socket) => {
+    // ... 기존 연결 로직은 아래 setupSocketEvents에서 처리
+    // 여기서는 투표 이벤트만 추가 (기존 game.js와 호환되게 통합 필요하지만, 편의상 여기에 리스너 추가 가능)
+    // 하지만 이미 game.js에서 connect 후 emit을 하므로, setupSocketEvents 내부나 initPlayer에서 처리 권장
+    // -> setupSocketEvents 함수 내부로 이동
+
+    socket.on('vote', (candidateId) => {
+        VotingManager.vote(socket.id, candidateId);
+    });
+
+    // [New] Ping System (Latency Check)
+    socket.on('latency', (startTime) => {
+        socket.emit('latency', startTime);
+    });
+});
 
 
 const Bot = require('./bot');
@@ -35,16 +73,231 @@ let players = {};
 let taggerId = null;
 let lastTaggerId = null; // 최근 술래 (봇 반격 방지용)
 // 맵 로드
-const MAPS_MODULE = loadMaps();
+// [Duplicate Removed]
 console.log(`[Server] Maps loaded: ${Object.keys(MAPS_MODULE).join(', ')}`);
+if (!MAPS_MODULE['DEFAULT']) {
+    console.error("🔥 [CRITICAL] DEFAULT map not found in MAPS_MODULE!");
+    process.exit(1);
+}
 
 let currentMapName = 'DEFAULT';
-let currentMapData = MAPS_MODULE.DEFAULT.data;
+let currentMapData = MAPS_MODULE.DEFAULT.data || (MAPS_MODULE.DEFAULT.generate ? MAPS_MODULE.DEFAULT.generate() : []);
+
+if (!currentMapData || currentMapData.length === 0) {
+    console.error("🔥 [CRITICAL] DEFAULT map data is empty!");
+    process.exit(1);
+}
+
+// [Redundant import removed]
 // [New] 안전 스폰 좌표 캐시
-let validSpawnPoints = analyzeMapConnectivity(currentMapData);
+let validSpawnPoints = [];
+try {
+    console.log("Analyzing map connectivity...");
+    validSpawnPoints = analyzeMapConnectivity(currentMapData);
+    console.log("Map analysis complete.");
+} catch (err) {
+    console.error("🔥 Map Analysis Failed:", err);
+}
 
 
 let gameMode = 'TAG'; // [복구] 게임 모드 변수 선언 (TAG/ZOMBIE)
+// [New] 서버 상태 관리 (State Machine)
+const ServerState = {
+    FREE: 'FREE',       // 자유 모드 (기존 Manual)
+    VOTING: 'VOTING',   // 투표 진행 중
+    PLAYING: 'PLAYING', // 게임 진행 중
+    RESULT: 'RESULT'    // 결과 화면 (잠시 대기)
+};
+let serverState = ServerState.PLAYING; // Default: Attract Mode (Playing with bots)
+let previousGameSettings = null; // Replay용 이전 설정
+
+// [New] 투표 관리자
+// [New] 투표 관리자
+const VotingManager = {
+    candidates: [],
+    votes: {}, // { socketId: candidateIndex }
+    timer: null,
+    duration: 10, // [Modified] 10초로 변경
+    currentStage: 'MODE', // 'MODE' | 'MAP'
+
+    startModeVoting: function () {
+        if (serverState !== ServerState.VOTING) return;
+        this.currentStage = 'MODE';
+
+        // 1. 모드 후보 생성
+        this.candidates = [
+            { id: 'TAG', type: 'MODE', name: '🏃 술래잡기', mode: 'TAG' },
+            { id: 'ZOMBIE', type: 'MODE', name: '🧟 좀비 감염', mode: 'ZOMBIE' },
+            { id: 'BOMB', type: 'MODE', name: '💣 폭탄 돌리기', mode: 'BOMB' },
+            { id: 'ICE', type: 'MODE', name: '❄️ 얼음땡', mode: 'ICE' }
+        ];
+
+        // Replay 옵션 (항상 마지막)
+        if (previousGameSettings) {
+            this.candidates.push({
+                id: 'REPLAY',
+                type: 'REPLAY',
+                name: '🔄 이전 게임 재플레이',
+                ...previousGameSettings
+            });
+        }
+
+        this.startVoting("📊 게임 모드를 선택하세요!");
+    },
+
+    startMapVoting: function (selectedMode) {
+        if (serverState !== ServerState.VOTING) return;
+        this.currentStage = 'MAP';
+
+        // 2. 맵 후보 생성 (랜덤 3개)
+        const allMaps = Object.values(MAPS_MODULE).filter(m => !m.isTest);
+        const mapCandidates = [];
+
+        // 맵 중복 방지 로직
+        const availableMaps = [...allMaps];
+
+        for (let i = 0; i < 3; i++) {
+            if (availableMaps.length === 0) break;
+            const randomIndex = Math.floor(Math.random() * availableMaps.length);
+            const map = availableMaps.splice(randomIndex, 1)[0]; // 뽑고 제거
+
+            mapCandidates.push({
+                id: i, // 0, 1, 2
+                type: 'MAP',
+                name: map.name,
+                size: map.allowedSizes ? map.allowedSizes[map.allowedSizes.length - 1] : 'M',
+                mode: selectedMode // 선택된 모드 전달
+            });
+        }
+
+        this.candidates = mapCandidates;
+        this.startVoting(`🗺️ [${selectedMode}] 할 맵을 선택하세요!`);
+    },
+
+    startVoting: function (title) {
+        this.votes = {};
+        // 클라이언트에 title도 같이 보내면 좋겠지만, 현재 프로토콜 유지
+        // gameMessage로 알림
+        io.emit('gameMessage', title);
+        io.emit('votingStart', { candidates: this.candidates, duration: this.duration, title: title });
+
+        let timeLeft = this.duration;
+        if (this.timer) clearInterval(this.timer);
+        this.timer = setInterval(() => {
+            timeLeft--;
+            if (timeLeft <= 0) {
+                this.end();
+            }
+        }, 1000);
+    },
+
+    start: function () {
+        // 하위 호환성 (외부 호출용) -> Mode Voting으로 시작
+        this.startModeVoting();
+    },
+
+    vote: function (socketId, candidateId) {
+        if (serverState !== ServerState.VOTING) return;
+        this.votes[socketId] = candidateId;
+        io.emit('updateVotes', this.getVoteCounts());
+    },
+
+    getVoteCounts: function () {
+        const counts = {};
+        Object.values(this.votes).forEach(cId => {
+            counts[cId] = (counts[cId] || 0) + 1;
+        });
+        return counts;
+    },
+
+    end: function () {
+        clearInterval(this.timer);
+        this.timer = null;
+
+        // [New] Lucky Pick Logic
+        const voters = Object.keys(this.votes);
+        let winnerCandidate = null;
+        let luckyVoter = null;
+
+        if (voters.length > 0) {
+            // 투표한 사람 중 한 명을 랜덤 추첨 (민주주의 + 운)
+            const winnerSocketId = voters[Math.floor(Math.random() * voters.length)];
+            const winnerChoiceId = this.votes[winnerSocketId];
+            winnerCandidate = this.candidates.find(c => c.id == winnerChoiceId); // type mismatch 방지 (==)
+            luckyVoter = players[winnerSocketId] ? players[winnerSocketId].nickname : 'Unknown';
+        } else {
+            // 투표가 없으면 랜덤
+            winnerCandidate = this.candidates[Math.floor(Math.random() * this.candidates.length)];
+            luckyVoter = 'System';
+        }
+
+        if (!winnerCandidate) {
+            // Fallback
+            winnerCandidate = this.candidates[0];
+        }
+
+        io.emit('gameMessage', `🎯 [${luckyVoter}] 님의 선택 당첨! (${winnerCandidate.name})`);
+
+        // 단계별 처리
+        if (this.currentStage === 'MODE') {
+            const selectedMode = winnerCandidate.mode || 'TAG';
+            if (winnerCandidate.type === 'REPLAY') {
+                // Replay는 바로 시작
+                io.emit('gameMessage', `🔄 이전 게임 설정을 불러옵니다...`);
+                setTimeout(() => applyGameSettings(winnerCandidate), 2000);
+            } else {
+                // 맵 투표로 이동
+                io.emit('gameMessage', `✅ 모드 결정: ${selectedMode}. 맵 투표로 넘어갑니다.`);
+                setTimeout(() => this.startMapVoting(selectedMode), 3000);
+            }
+        } else {
+            // MAP 투표 종료 -> 게임 시작
+            io.emit('gameMessage', `✅ 맵 결정: ${winnerCandidate.name}. 게임을 시작합니다!`);
+            setTimeout(() => applyGameSettings(winnerCandidate), 2000);
+        }
+    }
+};
+
+function applyGameSettings(settings) {
+    // 1. 맵 변경
+    if (settings.type === 'REPLAY') {
+        // Replay는 이미 settings 내부에 mapName 등이 있음
+    }
+
+    // 맵 로드 및 설정
+    const mapName = settings.mapName || settings.name;
+    const size = settings.size || 'M';
+
+    const nextMap = mapLoader.getMap(mapName);
+    if (nextMap) {
+        currentMapName = nextMap.name;
+        // 크기 설정 (M 사이즈 기준 예시)
+        let { width, height } = MAP_SIZES[size] || MAP_SIZES['M'];
+        if (currentMapName === 'SPEEDWAY') { width = 40; height = 40; }
+
+        if (typeof nextMap.generate === 'function') {
+            currentMapData = nextMap.generate(height, width);
+        } else {
+            currentMapData = JSON.parse(JSON.stringify(nextMap.data));
+        }
+
+        // Settings 저장 (다음 Replay용)
+        previousGameSettings = { mapName: currentMapName, size: size, mode: settings.mode };
+
+        io.emit('mapUpdate', currentMapData);
+
+        // 모드 변경
+        gameMode = settings.mode || 'TAG';
+        if (gameMode === 'TAG') resetGame(); // resetGame 내부에서 state 변경
+        else if (gameMode === 'ZOMBIE') { /* 좀비 초기화 로직 */ resetGame(); }
+        // ... 모드별 로직
+
+        // ResetGame이 state를 Free로 둘 수 있으므로 강제 PLAYING
+        serverState = ServerState.PLAYING;
+        io.emit('votingEnd', { nextMap: currentMapName, mode: gameMode });
+    }
+}
+
 let roundTime = 0;
 let roundTimer = null;
 // [통계 변수 추가]
@@ -630,7 +883,31 @@ function startRoundTimer(seconds) {
 
         if (roundTime <= 0) {
             clearInterval(roundTimer);
-            if (gameMode === 'ZOMBIE') {
+
+            // [New] 타이머 종료 시 모든 모드 공통: 투표로 전환
+            // 각 모드별 결과 메시지는 여기서 처리
+
+            if (gameMode === 'TAG') {
+                // [TAG Mode] 시간 종료 -> 투표
+                io.emit('gameMessage', '⏰ 시간 종료! 다음 맵 투표를 진행합니다.');
+
+                // 결과 데이터 전송 (술래가 못 잡았나? 그냥 종료?)
+                // 간단히 현재 생존자/술래 보여주고 종료
+                const ids = Object.keys(players);
+                const survivors = ids.filter(id => id !== taggerId && !players[id].isSpectator);
+                const survivorNames = survivors.map(id => players[id].nickname);
+
+                const resultData = {
+                    winner: 'time_over',
+                    survivorList: survivorNames,
+                    host: players[taggerId] ? players[taggerId].nickname : '-'
+                };
+                io.emit('gameResult', resultData);
+
+                // 10초 후 투표 시작
+                setTimeout(() => startVotingPhase(), 10000);
+
+            } else if (gameMode === 'ZOMBIE') {
                 // [생존자 승리]
                 io.emit('gameMessage', '🎉 생존자 승리! 2분 30초 동안 버텨냈습니다! 🎉');
 
@@ -639,7 +916,7 @@ function startRoundTimer(seconds) {
                 const survivors = ids.filter(id => !players[id].isZombie);
                 const survivorNames = survivors.map(id => players[id].nickname);
 
-                // MVP 계산 (도망자, 슈퍼전파자 등도 궁금할 수 있으니)
+                // MVP 계산
                 const zombies = ids.filter(id => players[id].isZombie);
 
                 let mvpRunner = null;   // 도망자
@@ -665,15 +942,25 @@ function startRoundTimer(seconds) {
 
                 io.emit('gameResult', resultData);
 
-                // 10초 후 리셋
-                // 10초 후 리셋
-                setTimeout(() => resetGame(), 10000);
+                // 10초 후 투표 시작
+                setTimeout(() => startVotingPhase(), 10000);
+
             } else if (gameMode === 'ICE') {
                 // [얼음땡 도망자 승리] (시간 초과)
                 sendIceResult('runners');
             }
         }
     }, 1000);
+}
+
+// [New] 투표 화면 전환 헬퍼
+function startVotingPhase() {
+    if (serverState === ServerState.VOTING) return;
+
+    // 리셋? 아니면 그냥 상태 변경?
+    // VotingManager.start()가 상태 체크를 하므로 상태 변경 먼저
+    serverState = ServerState.VOTING;
+    VotingManager.start();
 }
 
 // 봇 생성
@@ -805,18 +1092,19 @@ function resetGame() {
     io.emit('updateTraps', traps);
 
     // [추가] 랜덤 맵인 경우 리셋 시 구조 재생성
-    if (currentMapName === 'BACKROOMS') {
+    const mapInfo = mapLoader.getMap(currentMapName);
+    if (mapInfo && typeof mapInfo.generate === 'function') {
         try {
-            console.log('[Reset] Backrooms 재생성...');
-            currentMapData = generateBackrooms(60, 60);
+            console.log(`[Reset] ${currentMapName} 재생성...`);
+            // 기존 크기 유지 (height, width) - currentMapData가 2차원 배열이라 [height][width]
+            const h = currentMapData.length;
+            const w = currentMapData[0].length;
+            // 일부 맵은 고정 크기일 수 있으므로 안전장치
+            currentMapData = mapInfo.generate(h, w);
             io.emit('mapUpdate', currentMapData);
-        } catch (e) { console.error(e); }
-    } else if (currentMapName === 'OFFICE') {
-        currentMapData = generateOffice(60, 60);
-        io.emit('mapUpdate', currentMapData);
-    } else if (currentMapName === 'MAZE_BIG') {
-        currentMapData = generateMazeBig(60, 60);
-        io.emit('mapUpdate', currentMapData);
+        } catch (e) {
+            console.error(`[Reset] Map Regen Error (${currentMapName}):`, e);
+        }
     }
     // [Fix] 맵 변경/리셋 시 안전한 스폰 지점 재계산 (validSpawnPoints 갱신)
     // analyzeMapConnectivity가 server.js 상단에 require 되어 있는지 확인 필요
@@ -834,7 +1122,14 @@ function resetGame() {
         const span = getRandomSpawn(currentMapData, validSpawnPoints);
         // 아이템 ID 생성
         const itemId = `item_${Date.now()}_${i}`;
-        const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+
+        let availableTypes = ITEM_TYPES;
+        // [New] 얼음땡 모드 실드 제외
+        if (gameMode === 'ICE') {
+            availableTypes = availableTypes.filter(t => t !== 'shield');
+        }
+
+        const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
         items[itemId] = { x: span.x, y: span.y, type: type };
     }
     io.emit('updateItems', items);
@@ -928,6 +1223,10 @@ function resetGame() {
             taggerId = ids[Math.floor(Math.random() * ids.length)];
             io.emit('updateTagger', taggerId);
         }
+
+        // [New] 술래잡기 4분 타이머
+        io.emit('gameMessage', '⏱️ 4분 뒤 투표가 시작됩니다!');
+        startRoundTimer(240);
     } else if (gameMode === 'ZOMBIE') {
         taggerId = null; // 좀비 모드는 술래 개념 대신 좀비가 있음
         io.emit('updateTagger', null);
@@ -955,6 +1254,17 @@ io.on('connection', (socket) => {
     setupSocketEvents(socket);
     // [추가] 접속 시 현재 플레이어 수 전달 (봇 제외)
     socket.emit('playerCountUpdate', Object.values(players).filter(p => !(p instanceof Bot)).length);
+
+    // [Attract Mode] 접속 즉시 현재 게임 상태 전송 (로그인 전 관전용)
+    if (currentMapData) socket.emit('mapUpdate', currentMapData);
+    socket.emit('currentPlayers', players);
+    if (taggerId) socket.emit('updateTagger', taggerId);
+    socket.emit('gameMode', gameMode);
+
+    // [New] Ping Pong Logic
+    socket.on('latency', (clientTimestamp) => {
+        socket.emit('latency', clientTimestamp);
+    });
 });
 
 function setupSocketEvents(socket) {
@@ -978,82 +1288,89 @@ function handleAnnounceAction(socket, action) {
 
 
 function handleJoinGame(socket, data) {
-    if (players[socket.id]) return;
+    try {
+        if (players[socket.id]) return;
 
-    console.log('게임 입장:', data.nickname);
+        console.log('게임 입장:', data.nickname);
 
-    const spawnPos = getRandomSpawn(currentMapData);
-    let initialColor = data.color || '#e74c3c';
-    const realOriginalColor = initialColor; // [버그 수정] 난입 시 색상 변조 전 원본 저장
-    let isZombieStart = false;
-
-    // [난입 로직] 게임 중 난입 시 역할 자동 할당
-    let isSpectator = false; // [추가] 관전자 플래그
-    let joinMsg = null;
-
-    if (gameMode === 'ZOMBIE') {
-        // 좀비 모드에서 난입하면 좀비로 시작
-        isZombieStart = true;
-        const zombieColors = ['#2ecc71', '#27ae60', '#00b894', '#55efc4', '#16a085'];
-        initialColor = zombieColors[Math.floor(Math.random() * zombieColors.length)];
-    } else if (gameMode === 'BOMB' && bombEndTime > 0) {
-        // [폭탄 모드] 진행 중 난입 시 관전자
-        isSpectator = true;
-        initialColor = 'rgba(255, 255, 255, 0.3)';
-        joinMsg = "💣 폭탄 모드 진행 중이라 관전자로 입장합니다.";
-    } else {
-        // 태그 모드에서 난입하면 생존자(혹은 술래 없음 상태)
-        isZombieStart = false;
-    }
-
-    players[socket.id] = {
-        id: socket.id, // [Fix] id 속성 추가 (중요: 이것이 없어서 taggerId 비교가 실패했음)
-        x: spawnPos.x,
-        y: spawnPos.y,
-        playerId: socket.id,
-        color: initialColor,
-        initialColor: initialColor, // 현재 상태의 초기 색상
-        originalColor: realOriginalColor, // [버그 수정] 리셋 시 복구할 진짜 색상
-        nickname: data.nickname || '익명',
-        isZombie: isZombieStart,
-        isSpectator: isSpectator, // [추가]
-        stats: {
-            distance: 0,
-            infectionCount: 0,
-            survivalTime: 0,
-            iceUseCount: 0, // [New] 얼음 사용 횟수
-            rescueCount: 0  // [New] 구출 횟수
+        // [Safety] 맵 데이터 확인
+        if (!currentMapData || !currentMapData.length) {
+            throw new Error("Map data not initialized");
         }
-    };
 
-    if (joinMsg) {
-        socket.emit('gameMessage', joinMsg);
-        socket.emit('chatMessage', { nickname: 'System', message: joinMsg, playerId: 'system' });
+        const spawnPos = getRandomSpawn(currentMapData);
+        let initialColor = data.color || '#e74c3c';
+        const realOriginalColor = initialColor; // [버그 수정] 난입 시 색상 변조 전 원본 저장
+        let isZombieStart = false;
+
+        // [난입 로직] 게임 중 난입 시 역할 자동 할당
+        let isSpectator = false; // [추가] 관전자 플래그
+        let joinMsg = null;
+
+        if (gameMode === 'ZOMBIE') {
+            // 좀비 모드에서 난입하면 좀비로 시작
+            isZombieStart = true;
+            const zombieColors = ['#2ecc71', '#27ae60', '#00b894', '#55efc4', '#16a085'];
+            initialColor = zombieColors[Math.floor(Math.random() * zombieColors.length)];
+        } else if (gameMode === 'BOMB' && bombEndTime > 0) {
+            // [폭탄 모드] 진행 중 난입 시 관전자
+            isSpectator = true;
+            initialColor = 'rgba(255, 255, 255, 0.3)';
+            joinMsg = "💣 폭탄 모드 진행 중이라 관전자로 입장합니다.";
+        } else {
+            // 태그 모드에서 난입하면 생존자(혹은 술래 없음 상태)
+            isZombieStart = false;
+        }
+
+        players[socket.id] = {
+            id: socket.id, // [Fix] id 속성 추가 (중요: 이것이 없어서 taggerId 비교가 실패했음)
+            x: spawnPos.x,
+            y: spawnPos.y,
+            playerId: socket.id,
+            color: initialColor,
+            initialColor: initialColor, // 현재 상태의 초기 색상
+            originalColor: realOriginalColor, // [버그 수정] 리셋 시 복구할 진짜 색상
+            nickname: data.nickname || '익명',
+            isZombie: isZombieStart,
+            isSpectator: isSpectator, // [추가]
+            stats: {
+                distance: 0,
+                infectionCount: 0,
+                survivalTime: 0,
+                iceUseCount: 0, // [New] 얼음 사용 횟수
+                rescueCount: 0  // [New] 구출 횟수
+            }
+        };
+
+        if (joinMsg) {
+            socket.emit('gameMessage', joinMsg);
+            socket.emit('chatMessage', { nickname: 'System', message: joinMsg, playerId: 'system' });
+        }
+
+        if (!taggerId && !isSpectator) { // 관전자는 술래 아님
+            taggerId = socket.id;
+            io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 첫 술래입니다!`);
+        } else {
+            io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 입장했습니다.`);
+        }
+
+        socket.emit('joinSuccess', players[socket.id]);
+        socket.emit('mapUpdate', currentMapData); // 맵 데이터 전송
+        socket.emit('gameMode', gameMode); // [추가]
+        socket.emit('currentPlayers', players);
+        socket.emit('updateItems', items);
+        socket.emit('updateTraps', traps);
+        socket.emit('updateTagger', taggerId);
+
+        socket.broadcast.emit('newPlayer', players[socket.id]);
+        // [추가] 접속자 수 갱신 브로드캐스트 (봇 제외)
+        const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
+        io.emit('playerCountUpdate', realUserCount);
+    } catch (err) {
+        console.error("JoinGame Error:", err);
+        socket.emit('gameMessage', '❌ 게임 입장 실패: ' + err.message);
+        // 클라이언트 버튼 리셋 유도 가능? (별도 이벤트 필요할 수도)
     }
-
-    if (!taggerId && !isSpectator) { // 관전자는 술래 아님
-        taggerId = socket.id;
-        io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 첫 술래입니다!`);
-    } else {
-        io.emit('gameMessage', `[${players[socket.id].nickname}] 님이 입장했습니다.`);
-    }
-
-    socket.emit('joinSuccess', players[socket.id]);
-    socket.emit('mapUpdate', currentMapData); // 맵 데이터 전송
-    socket.emit('gameMode', gameMode); // [추가]
-    socket.emit('currentPlayers', players);
-    socket.emit('updateItems', items);
-    socket.emit('updateTraps', traps);
-    socket.emit('updateTagger', taggerId);
-
-    socket.broadcast.emit('newPlayer', players[socket.id]);
-    // [추가] 접속자 수 갱신 브로드캐스트
-    // [추가] 접속자 수 갱신 브로드캐스트 (봇 제외)
-    const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
-    io.emit('playerCountUpdate', realUserCount);
-
-    // [Fix] 입장 성공 이벤트 전송
-    socket.emit('joinSuccess', players[socket.id]);
 }
 
 function handlePlayerMove(socket, movementData) {
@@ -1155,13 +1472,16 @@ function handleDisconnect(socket) {
         if (gameMode === 'ZOMBIE') checkZombieWin();
 
         if (socket.id === taggerId) {
-            const remainingIds = Object.keys(players);
-            if (remainingIds.length > 0) {
-                taggerId = remainingIds[Math.floor(Math.random() * remainingIds.length)];
+            // [Fix] 술래가 나갔을 때, 관전자가 아닌 플레이어 중에서만 새 술래 선정
+            const candidates = Object.keys(players).filter(id => !players[id].isSpectator && id !== socket.id);
+            if (candidates.length > 0) {
+                taggerId = candidates[Math.floor(Math.random() * candidates.length)];
                 io.emit('updateTagger', taggerId);
                 io.emit('gameMessage', `술래가 나가서 [${players[taggerId].nickname}] 님이 새 술래가 됩니다!`);
             } else {
                 taggerId = null;
+                // [Fix] 생존자가 없으면 게임 종료/리셋 처리 필요 (모드별)
+                if (gameMode === 'ICE') checkIceWin(); // 승리 체크 트리거
             }
         }
     }
@@ -1256,12 +1576,25 @@ function handleChatMessage(socket, msg) {
 
     // 게임 모드 설정
     if (cmd.startsWith('/mode ')) {
+        const parts = cmd.split(' ');
+        const mode = parts[1].toLowerCase();
+
+        // [New] Auto/Free 모드 전환
+        if (mode === 'auto') {
+            serverState = ServerState.VOTING;
+            io.emit('gameMessage', `🤖 [System] 자동 투표 모드로 전환합니다.`);
+            VotingManager.start(); // 즉시 투표 시작
+            return;
+        } else if (mode === 'free') {
+            serverState = ServerState.FREE;
+            io.emit('gameMessage', `🔓 [System] 자유(관리자) 모드로 전환합니다.`);
+            if (VotingManager.timer) clearInterval(VotingManager.timer); // 투표 중단
+            return;
+        }
+
         const modeMsg = `[${player.nickname}] 님이 명령어를 실행했습니다: ${cmd}`;
         io.emit('gameMessage', modeMsg);
         io.emit('chatMessage', { nickname: 'System', message: modeMsg, playerId: 'system' });
-
-        const parts = cmd.split(' ');
-        const mode = parts[1].toLowerCase();
 
         if (mode === 'zombie') {
             gameMode = 'ZOMBIE';
@@ -1334,61 +1667,87 @@ function handleChatMessage(socket, msg) {
         return;
     }
 
-    // 맵 변경 커맨드
+    // [명령어] /map [MAP_NAME] [SIZE?]
+    // [명령어] /map [MAP_NAME] [SIZE?]
+    // [명령어] /map [MAP_NAME] [SIZE?]
     if (cmd.startsWith('/map')) {
-        const inputName = cmd.split(' ')[1];
-        if (inputName) {
-            const mapKey = inputName.toUpperCase();
+        const parts = cmd.split(' ');
+        const args = parts.slice(1);
+        const mapNameInput = args[0] ? args[0].toUpperCase() : 'RANDOM';
+        const sizeInput = args[1] ? args[1].toUpperCase() : null; // Optional: S, M, L
 
-            if (MAPS_MODULE[mapKey]) {
-                const mapObj = MAPS_MODULE[mapKey];
-                console.log(`[MapGen] Switching to map: ${mapKey}`);
+        let nextMap = null;
+        let targetSizeKey = 'M'; // Default
 
-                try {
-                    let newMapData;
-                    let isRandom = false;
+        // 1. 사이즈 파싱 및 랜덤 선택
+        if (['SMALL', 'S'].includes(mapNameInput)) { targetSizeKey = 'S'; nextMap = mapLoader.getRandomMap('S'); }
+        else if (['MEDIUM', 'M'].includes(mapNameInput)) { targetSizeKey = 'M'; nextMap = mapLoader.getRandomMap('M'); }
+        else if (['LARGE', 'L'].includes(mapNameInput)) { targetSizeKey = 'L'; nextMap = mapLoader.getRandomMap('L'); }
+        else if (mapNameInput === 'RANDOM') {
+            const sizes = ['S', 'M', 'L'];
+            targetSizeKey = sizes[Math.floor(Math.random() * sizes.length)];
+            nextMap = mapLoader.getRandomMap(targetSizeKey);
+        }
+        else {
+            // 특정 맵 지정
+            nextMap = mapLoader.getMap(mapNameInput);
 
-                    if (mapObj.generate) {
-                        // 생성형 맵
-                        console.log(`[MapGen] Generating ${mapKey}...`);
-                        newMapData = mapObj.generate(60, 60); // 기본 크기 60x60
-                        isRandom = true;
-                    } else if (mapObj.data) {
-                        // 정적 맵
-                        newMapData = mapObj.data;
-                    } else {
-                        throw new Error("Invalid map module structure");
-                    }
-
-                    if (!newMapData || !newMapData.length) throw new Error("Map data invalid");
-
-                    currentMapName = mapKey;
-                    currentMapData = newMapData;
-
-                    // 모든 플레이어/봇 재배치 및 리셋
-                    resetGame();
-                    io.emit('mapUpdate', currentMapData);
-
-                    let mapMsg = `🗺️ 맵이 [${currentMapName}]으로 변경되었습니다!`;
-                    if (isRandom) mapMsg += " (♻️ 랜덤 구조 생성)";
-
-                    // [New] 맵별 특수 메시지 (설명)
-                    if (currentMapName === 'SPEEDWAY') mapMsg += " - 🏎️ 질주 본능!";
-                    if (currentMapName === 'FOREST') mapMsg += " - 🌲 숲 속의 술래잡기";
-                    if (currentMapName === 'STADIUM') mapMsg += " - ⚽ 넓은 운동장";
-
-                    io.emit('gameMessage', mapMsg);
-                    io.emit('chatMessage', { nickname: 'System', message: mapMsg, playerId: 'system' });
-
-                } catch (e) {
-                    console.error('[MapGen] Error:', e);
-                    socket.emit('chatMessage', { nickname: 'System', message: `맵 변경 오류: ${e.message}`, playerId: 'system' });
-                }
-            } else {
-                const availMaps = Object.keys(MAPS_MODULE).join(', ');
-                const errMsg = `존재하지 않는 맵입니다. 사용 가능: ${availMaps}`;
-                socket.emit('chatMessage', { nickname: 'System', message: errMsg, playerId: 'system' });
+            // 사이즈 인자 처리
+            if (sizeInput && ['S', 'M', 'L'].includes(sizeInput)) targetSizeKey = sizeInput;
+            else if (sizeInput && ['SMALL', 'MEDIUM', 'LARGE'].includes(sizeInput)) targetSizeKey = sizeInput[0];
+            else if (nextMap && nextMap.allowedSizes) {
+                // 맵 기본 사이즈 (가장 큰 것 or 첫번째)
+                targetSizeKey = nextMap.allowedSizes[nextMap.allowedSizes.length - 1];
             }
+        }
+
+        if (nextMap) {
+            // 사이즈 유효성 검사 (강제 조정)
+            if (nextMap.allowedSizes && !nextMap.allowedSizes.includes(targetSizeKey)) {
+                console.log(`[Map] Warning: ${nextMap.name} does not support ${targetSizeKey}. Fallback.`);
+                targetSizeKey = nextMap.allowedSizes[nextMap.allowedSizes.length - 1];
+            }
+
+            // 치수 결정
+            let { width, height } = MAP_SIZES[targetSizeKey] || MAP_SIZES['M'];
+            if (targetSizeKey === 'M' && nextMap.name === 'SPEEDWAY') { width = 40; height = 40; } // Exception
+
+            console.log(`[Map] Switching to ${nextMap.name} (${targetSizeKey}: ${width}x${height})`);
+
+            try {
+                if (typeof nextMap.generate === 'function') {
+                    currentMapData = nextMap.generate(height, width); // generate(rows, cols)
+                    if (nextMap.name === 'SPEEDWAY') currentMapData = nextMap.generate(40, 40); // Exception fix
+                } else if (nextMap.data) {
+                    currentMapData = JSON.parse(JSON.stringify(nextMap.data)); // Copy
+                } else {
+                    throw new Error("Invalid Map Structure");
+                }
+
+                if (!currentMapData || !currentMapData.length) throw new Error("Generated Data Empty");
+
+                currentMapName = nextMap.name;
+
+                // 맵 업데이트 브로드캐스트
+                // [Fix] 클라이언트가 'mapUpdate'를 리스닝하므로 이벤트명 변경
+                io.emit('mapUpdate', currentMapData);
+                resetGame();
+
+                let mapMsg = `🗺️ 맵 변경: ${currentMapName} (${targetSizeKey})`;
+                if (currentMapName === 'SPEEDWAY') mapMsg += " - 🏎️ 질주 본능!";
+                if (currentMapName === 'FOREST') mapMsg += " - 🌲 숲 속의 술래잡기";
+                if (currentMapName === 'OFFICE') mapMsg += " - 🏢 오피스 탈출";
+
+                io.emit('chatMessage', { nickname: '[System]', message: mapMsg, color: '#00ff00' });
+
+            } catch (e) {
+                console.error('[MapGen] Error:', e);
+                socket.emit('chatMessage', { nickname: '[System]', message: `❌ 맵 생성 실패: ${e.message}`, color: '#ff0000' });
+            }
+
+        } else {
+            // 유사한 이름 찾기 제안 (옵션)
+            socket.emit('chatMessage', { nickname: '[System]', message: `❌ 맵을 찾을 수 없습니다: ${mapNameInput}`, color: '#ff0000' });
         }
         return;
     }
@@ -1417,9 +1776,22 @@ function handleChatMessage(socket, msg) {
             `- 맵 이름: ${currentMapName}<br>` +
             `- 크기: ${currentMapData[0].length} x ${currentMapData.length} (${mapSize} tiles)<br>` +
             `- 아이템: ${currentItemCount} / ${maxItems} (Max)<br>` +
-            `- 생성 확률: 5% (Loop당)`;
+            `- 생성 확률: 5% (Loop당)<br>` +
+            `- 남은 시간: ${roundTime}초`;
 
         socket.emit('chatMessage', { nickname: 'System', message: infoMsg, playerId: 'system' });
+        return;
+    }
+
+    // [New] 게임 강제 종료 (투표로 넘어감)
+    if (cmd === '/endgame' || cmd === '/finish' || cmd === '/stop') {
+        if (roundTimer) {
+            io.emit('gameMessage', `🛑 [${player.nickname}] 님이 게임을 강제 종료했습니다.`);
+            roundTime = 1; // 1초 뒤 종료 트리거 (안전하게 루프 타게 함)
+            io.emit('updateTimer', roundTime);
+        } else {
+            socket.emit('gameMessage', '진행 중인 타이머가 없습니다. (투표 중이거나 대기 중)');
+        }
         return;
     }
 
@@ -1689,11 +2061,11 @@ function updateBombGame() {
                     ]
                 };
                 io.emit('gameResult', resultData);
-                setTimeout(() => resetGame(), 10000);
+                setTimeout(() => startVotingPhase(), 10000);
             } else if (survivors.length === 0) {
                 // 모두 멸망? (동시 폭사 등)
                 io.emit('gameMessage', `💀 생존자가 없습니다... 게임 오버.`);
-                setTimeout(() => resetGame(), 5000);
+                setTimeout(() => startVotingPhase(), 5000);
             } else {
                 // 다음 라운드 진행
                 io.emit('gameMessage', `생존자 ${survivors.length}명 남았습니다. 다음 라운드 준비...`);
@@ -1707,9 +2079,57 @@ function updateBombGame() {
     }
 }
 
-const PORT = process.env.PORT || 3000;
+// 투표 단계 시작 (Global Function)
+function startVotingPhase() {
+    if (serverState === ServerState.VOTING) return;
+
+    serverState = ServerState.VOTING;
+    io.emit('gameMessage', '🗳️ 잠시 후 투표가 시작됩니다!');
+    io.emit('chatMessage', { nickname: 'System', message: '🗳️ 투표 시작! 다음 게임 모드를 선택하세요.', playerId: 'system' });
+
+    // 3초 대기 후 투표 시작 (결과 화면 감상 시간)
+    setTimeout(() => {
+        VotingManager.startModeVoting();
+    }, 3000);
+}
+
 server.listen(PORT, () => {
     console.log(`서버 실행: http://localhost:${PORT}`);
+    // [Autostart: Attract Mode] 서버 시작 시 봇 소환 및 게임 시작
+    // 사용자가 로그인하기 전에 봇들이 뛰어노는 모습을 보여줌
+    setTimeout(() => {
+        console.log("[Auto] Starting Attract Mode (Spawn Bots)...");
+
+        // 1. 강제 PLAYING 상태
+        serverState = ServerState.PLAYING;
+
+        // 2. 봇 3마리 소환
+        for (let i = 0; i < 3; i++) {
+            const botId = 'bot_' + Date.now() + '_' + i;
+            const bot = new Bot(botId, currentMapData);
+            players[bot.id] = bot;
+
+            // 봇에게 색상 랜덤 할당 (비주얼)
+            bot.color = COLORS[Math.floor(Math.random() * COLORS.length)];
+            bot.initialColor = bot.color;
+        }
+
+        // 3. 술래 선정 (봇 중 하나)
+        const botIds = Object.keys(players);
+        if (botIds.length > 0) {
+            taggerId = botIds[Math.floor(Math.random() * botIds.length)];
+            io.emit('updateTagger', taggerId);
+        }
+
+        // 4. 게임 루프가 이미 돌고 있으므로 상태만 알리면 됨
+        const realUserCount = 0;
+        io.emit('playerCountUpdate', realUserCount);
+        io.emit('gameMessage', "🤖 봇들이 몸을 풀고 있습니다.");
+
+        // [New] 초기 타이머 시작 (Tag Mode)
+        startRoundTimer(240);
+
+    }, 2000);
 });
 
 // [New] 얼음땡 카운트다운 시작
@@ -1744,6 +2164,7 @@ function checkIceWin() {
     console.log(`[ICE_WIN_CHECK] Survivors: ${survivors.length}, Frozen: ${frozenSurvivors.length}`);
 
     if (survivors.length === 0 || survivors.length === frozenSurvivors.length) {
+        // [수정] 3분 타이머 종료와 동일한 결과 화면 -> 투표
         sendIceResult('tagger');
     }
 }
@@ -1754,9 +2175,8 @@ function sendIceResult(winnerType) {
     if (roundTimer) clearInterval(roundTimer); // 라운드 타이머도 정지
 
     const ids = Object.keys(players);
-    const survivors = ids.filter(id => players[id].id !== taggerId && !players[id].isSpectator); // 실제 생존자 아님, 통계용 대상 (술래 제외 전체)
-    // 통계용 대상: 술래가 아닌 모든 플레이어 (관전자는... 잡힌 사람이니 통계에 포함되어야 함)
-    const nonTaggers = ids.filter(id => players[id].id !== taggerId);
+    // [Fix] 통계용 대상: 술래 제외 + 관전자 제외
+    const nonTaggers = ids.filter(id => players[id].id !== taggerId && !players[id].isSpectator);
 
     // 1. 술래
     const tagger = players[taggerId];
@@ -1792,7 +2212,7 @@ function sendIceResult(winnerType) {
         io.emit('gameMessage', '🎉 도망자 승리! 술래를 피해 살아남았습니다! 🎉');
     }
 
-    setTimeout(() => resetGame(), 10000);
+    setTimeout(() => startVotingPhase(), 10000);
 }
 
 // [New] 얼음땡에서 도망자 간 땡(Thaw) 로직

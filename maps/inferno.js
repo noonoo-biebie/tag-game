@@ -1,5 +1,7 @@
 module.exports = {
     name: 'INFERNO',
+    allowedSizes: ['S'],
+    isTest: true,
     generate: function (rows = 60, cols = 60) {
         // [컨셉] 인페르노 (용암 미로) - 소형 (20x16) - MAZE 맵 사이즈 참조
         // 4: 용암(벽), 0: 길

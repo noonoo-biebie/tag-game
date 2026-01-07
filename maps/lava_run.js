@@ -25,5 +25,7 @@ const map = [
 
 module.exports = {
     name: 'LAVA_RUN',
+    allowedSizes: ['M'],
+    isTest: true,
     data: map
 };

@@ -1,5 +1,6 @@
 module.exports = {
     name: 'STADIUM',
+    allowedSizes: ['S', 'M'],
     data: (function () {
         const rows = 30; // 조금 작게
         const cols = 50;

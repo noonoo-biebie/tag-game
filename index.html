@@ -217,20 +217,11 @@
     </style>
     </div>
 
-    <!-- 닉네임 입력 화면 -->
-    <div id="login-screen" style="display: none;"> <!-- 초기엔 숨김 (연결되면 보임) -->
-        <h1>🏃 달리고 잡기 v1.5.0 (최적화 완료!)</h1>
-        <div style="margin-bottom: 20px;">
-            <input type="text" id="nickname-input" placeholder="닉네임 (최대 10자)" maxlength="10">
-            <input type="color" id="color-input" value="#e74c3c" title="캐릭터 색상 선택">
-        </div>
-        <button id="start-btn">게임 시작</button>
-        <p id="connection-count" style="margin-top: 15px; color: #bbb; font-size: 14px; font-weight: bold;">현재 접속자: -명
-        </p>
-    </div>
+    <!-- 닉네임 입력 화면 (Legacy Removed) -->
+    <!-- [Duplicate Removed] -->
 
     <!-- 게임 화면 -->
-    <div id="game-container" style="display: none;">
+    <div id="game-container">
         <!-- 미니맵 오버레이 -->
         <div id="minimap-overlay"
             style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:20; background:rgba(0,0,0,0.9); padding:10px; border:2px solid #555; border-radius:10px; text-align:center;">
@@ -257,6 +248,40 @@
         </div>
 
         <div id="error-log"></div>
+        <!-- UI Overlays -->
+        <div id="ui-layer">
+            <!-- 1. Login Screen -->
+            <div id="login-screen">
+                <h1>🏃 달리고 잡기 🏃</h1>
+                <p>캐릭터를 꾸미고 입장하세요!</p>
+
+                <div class="login-row" style="margin-bottom: 15px;">
+                    <input type="text" id="nickname-input" placeholder="닉네임 (최대 10자)" maxlength="10">
+                </div>
+
+                <div class="login-row"
+                    style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-bottom: 20px;">
+                    <label for="color-input" style="color: #bdc3c7;">색상 선택:</label>
+                    <input type="color" id="color-input" value="#3498db"
+                        style="border: none; width: 50px; height: 40px; cursor: pointer; background: none;">
+                </div>
+
+                <button id="start-btn">게임 시작</button>
+            </div>
+
+            <!-- [New] Voting Screen -->
+            <div id="voting-screen" style="display: none;">
+                <h2>🗳️ 다음 맵 투표 🗳️</h2>
+                <div id="voting-timer">남은 시간: 15초</div>
+                <div id="map-cards-container">
+                    <!-- Cards will be injected by JS -->
+                </div>
+                <div id="voting-status">투표를 진행해 주세요!</div>
+            </div>
+
+            <!-- 2. HUD (In-Game) -->
+        </div>
+        <div id="ping-display">Ping: -ms</div>
         <div id="status-indicator"></div>
 
         <!-- 모바일 컨트롤 (조이스틱 & 버튼) -->

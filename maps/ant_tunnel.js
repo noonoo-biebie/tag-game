@@ -1,5 +1,6 @@
 module.exports = {
     name: 'ANT_TUNNEL',
+    allowedSizes: ['M', 'L'],
     generate: function (rows = 60, cols = 60) {
         // [컨셉] 개미굴 (Organic Worm Tunnels) - MAZE 변형
         // 기존 GLACIER (Worm) 로직에서 얼음(3) -> 빈 공간(0)으로 변경

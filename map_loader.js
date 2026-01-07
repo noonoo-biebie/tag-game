@@ -1,13 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 
+let loadedMaps = {};
+
 function loadMaps() {
-    const maps = {};
+    loadedMaps = {};
     const mapsDir = path.join(__dirname, 'maps');
 
     if (!fs.existsSync(mapsDir)) {
         console.error("[MapLoader] 'maps' directory not found!");
-        return maps;
+        return loadedMaps;
     }
 
     const files = fs.readdirSync(mapsDir);
@@ -16,29 +18,50 @@ function loadMaps() {
         if (file.endsWith('.js')) {
             try {
                 const mapPath = path.join(mapsDir, file);
-                // 캐시 삭제 (동적 리로드 대비)
-                delete require.cache[require.resolve(mapPath)];
+                delete require.cache[require.resolve(mapPath)]; // Clear cache for reload
 
                 const mapModule = require(mapPath);
 
-                // 유효성 검사: 이름과 데이터(또는 생성함수)가 있어야 함
-                // mapModule.name: 맵 식별자 (영어, 대문자 권장)
-                // mapModule.data: 2차원 배열 (정적 맵)
-                // mapModule.generate: 생성 함수 (동적 맵)
-
                 if (mapModule.name && (mapModule.data || mapModule.generate)) {
-                    maps[mapModule.name] = mapModule;
-                    console.log(`[MapLoader] Loaded map: ${mapModule.name}`);
+                    loadedMaps[mapModule.name] = mapModule;
+                    // console.log(`[MapLoader] Loaded: ${mapModule.name} (Sizes: ${mapModule.allowedSizes || 'ALL'})`);
                 } else {
-                    console.warn(`[MapLoader] Skipped invalid map file: ${file} (Missing name or data/generate)`);
+                    console.warn(`[MapLoader] Skipped invalid: ${file}`);
                 }
             } catch (err) {
-                console.error(`[MapLoader] Error loading map file: ${file}`, err);
+                console.error(`[MapLoader] Error loading ${file}:`, err);
             }
         }
     });
 
-    return maps;
+    return loadedMaps;
 }
 
-module.exports = { loadMaps };
+function getRandomMap(size = 'M') {
+    const candidates = Object.values(loadedMaps).filter(map => {
+        // 1. Test 맵 제외 (명령어로 직접 호출해야 함)
+        if (map.isTest) return false;
+
+        // 2. 해당 사이즈 지원 여부 확인
+        if (map.allowedSizes && !map.allowedSizes.includes(size)) return false;
+
+        return true;
+    });
+
+    if (candidates.length === 0) {
+        console.warn(`[MapLoader] No map found for size '${size}'. Fallback to ANY.`);
+        const fallback = Object.values(loadedMaps).filter(m => !m.isTest);
+        if (fallback.length === 0) return null;
+        return fallback[Math.floor(Math.random() * fallback.length)];
+    }
+
+    const picked = candidates[Math.floor(Math.random() * candidates.length)];
+    console.log(`[MapLoader] Random Pick (${size}): ${picked.name}`);
+    return picked;
+}
+
+function getMap(name) {
+    return loadedMaps[name] || null;
+}
+
+module.exports = { loadMaps, getRandomMap, getMap };

@@ -1,5 +1,6 @@
 module.exports = {
     name: 'BACKROOMS',
+    allowedSizes: ['M', 'L'],
     generate: function (rows = 60, cols = 60) {
         const map = Array.from({ length: rows }, () => Array(cols).fill(1));
         const zoneMap = Array.from({ length: rows }, () => Array(cols).fill('MAZE'));

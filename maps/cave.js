@@ -1,5 +1,6 @@
 module.exports = {
     name: 'CAVE',
+    allowedSizes: ['M', 'L'],
     generate: function (rows = 60, cols = 60) {
         // [컨셉] 넓은 동굴 (Cellular Automata v1 - Saved)
         // 1: 벽, 0: 바닥 (얼음 아님)

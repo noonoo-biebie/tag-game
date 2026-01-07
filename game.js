@@ -2,6 +2,13 @@ const socket = io({
     transports: ['websocket', 'polling']
 });
 
+socket.on('connect_error', (err) => {
+    console.error('Socket Connection Error:', err);
+    alert('서버 연결 실패: ' + err.message);
+    const btn = document.getElementById('start-btn');
+    if (btn) { btn.textContent = '재시도'; btn.disabled = false; }
+});
+
 // 캔버스 설정
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -17,6 +24,8 @@ const nicknameInput = document.getElementById('nickname-input');
 const colorInput = document.getElementById('color-input');
 const startBtn = document.getElementById('start-btn');
 const loadingOverlay = document.getElementById('server-loading-overlay'); // 추가
+const pingDisplay = document.getElementById('ping-display'); // [New]
+
 
 // 채팅 요소
 const chatInput = document.getElementById('chat-input');
@@ -26,7 +35,7 @@ const chatMessages = document.getElementById('chat-messages');
 const COMMAND_DATA = {
     '/reset': { desc: '🔄 게임 리셋', args: [] },
     '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag', 'bomb', 'ice'] },
-    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'SPEEDWAY', 'FOREST', 'STADIUM', 'OFFICE', 'BACKROOMS', 'MAZE_BIG', 'LAVA_RUN', 'ANT_TUNNEL', 'CAVE', 'INFERNO', 'MUD_RUN'] },
+    '/map': { desc: '🗺️ 맵 변경', args: ['RANDOM', 'SMALL', 'MEDIUM', 'LARGE', 'DEFAULT', 'MAZE', 'STADIUM', 'FOREST', 'SPEEDWAY', 'MUD_RUN', 'CAVE', 'ANT_TUNNEL', 'BACKROOMS', 'OFFICE', 'INFERNO', 'LAVA_RUN'] },
     '/bot': { desc: '🤖 봇 소환 [숫자]', args: [] },
     '/spec': { desc: '👻 관전 모드 토글', args: [] },
     '/kickbot': { desc: '👋 봇 전체 추방', args: [] },
@@ -258,7 +267,13 @@ let myItem = null;
 let taggerId = null;
 let gameMode = 'TAG'; // [게임 모드] TAG, ZOMBIE, BOMB
 let currentMapData = null; // [추가] 맵 데이터 저장용
+// [Fix] Removed duplicate currentMapData declaration
+// (Already declared at line 267)
 let map = null; // [Safety] 메인 렌더링용, 초기값 null 명시
+
+// [Fix] Game Loop State Variables (Moved from mid-file)
+let lastTime = 0;
+let loopRunning = false;
 
 // [Visual FX] 화면 흔들림
 let shakeIntensity = 0;
@@ -308,7 +323,6 @@ window.addEventListener('click', (e) => {
     if (e.target == guideModal) {
         guideModal.style.display = 'none';
     }
-
 });
 
 
@@ -317,17 +331,35 @@ window.addEventListener('click', (e) => {
 
 let showShadows = true; // [개발자 치트] 그림자 토글 변수
 
+// [Fix] Removed duplicate const declarations (declared at top of file)
+// const nicknameInput = document.getElementById('nickname-input');
+// const colorInput = document.getElementById('color-input');
+// const startBtn = document.getElementById('start-btn');
+
 startBtn.addEventListener('click', () => {
     let nickname = nicknameInput.value.trim();
+    const color = colorInput.value; // [New]
+
     if (!nickname) {
+        // [New] 랜덤 닉네임 생성 (예: Player123)
         nickname = 'Player' + Math.floor(Math.random() * 1000);
     }
 
-    // 버튼 클릭 피드백
+    // 버튼 비활성화 (중복 클릭 방지)
     startBtn.disabled = true;
     startBtn.innerText = "입장 중...";
 
-    socket.emit('joinGame', { nickname: nickname, color: colorInput.value });
+    // [Fix] 입장 시도 시 색상 정보도 함께 전송
+    socket.emit('joinGame', { nickname: nickname, color: color });
+
+    // 타임아웃 (3초) - 서버 응답 없을 시 복구
+    setTimeout(() => {
+        if (!isJoined) {
+            startBtn.disabled = false;
+            startBtn.innerText = "게임 시작";
+            // alert("서버 응답이 없습니다. 잠시 후 다시 시도해주세요.");
+        }
+    }, 3000);
 });
 
 // (Deleted duplicate keydown listener)
@@ -341,13 +373,9 @@ socket.on('playerCountUpdate', (playerCount) => {
 socket.on('joinSuccess', (myInfo) => {
     isJoined = true;
     loginScreen.style.display = 'none'; // Hide login screen on join success
-    gameContainer.style.display = 'block';
     document.body.focus();
 
-    if (!loopRunning) {
-        loopRunning = true;
-        requestAnimationFrame(update);
-    }
+    // Loop is already running (Attract Mode)
 
     // [Keep-Alive] 게임 중일 때만 서버 깨우기 (5분마다)
     const keepAlive = () => {
@@ -386,8 +414,20 @@ socket.on('joinSuccess', (myInfo) => {
     }, 5000);
 
     // 이후 4분마다 반복
+    // 이후 4분마다 반복
     keepAliveInterval = setInterval(keepAlive, 4 * 60 * 1000);
+
+    // [New] Ping Check Interval (Every 2s)
+    setInterval(() => {
+        if (!isJoined) return;
+        socket.emit('latency', Date.now());
+    }, 2000);
 });
+
+// --- 전역 변수 (투표 & 핑) ---
+let votingTimer = null;
+let networkPing = 0;
+let myVote = null;
 
 // --- 소켓 이벤트 핸들링 ---
 
@@ -908,16 +948,119 @@ socket.on('connect', () => {
     if (!isJoined) {
         loadingOverlay.style.display = 'none';
         loginScreen.style.display = 'block';
+        // [Debug] 연결 성공 알림 (사용자 확인용)
+        // alert("서버와 연결되었습니다!"); 
     }
 });
 
 socket.on('disconnect', () => {
     updateStatus(false);
+    // alert("서버와 연결이 끊어졌습니다.");
 });
 
 socket.on('connect_error', (err) => {
     showError(`Connection Error: ${err.message}`);
     updateStatus(false);
+    alert("서버 연결 실패: " + err.message);
+});
+
+socket.on('latency', (startTime) => {
+    const latency = Date.now() - startTime;
+    networkPing = latency;
+});
+
+// --- Voting System ---
+const votingScreen = document.getElementById('voting-screen');
+const cardsContainer = document.getElementById('map-cards-container');
+const timerDiv = document.getElementById('voting-timer');
+
+socket.on('votingStart', (data) => {
+    // UI 표시
+    votingScreen.style.display = 'block';
+    cardsContainer.innerHTML = '';
+    myVote = null;
+
+    // 타이머 시작
+    let timeLeft = data.duration;
+    timerDiv.innerText = `남은 시간: ${timeLeft}초`;
+    timerDiv.style.color = '#f1c40f';
+
+    if (votingTimer) clearInterval(votingTimer);
+    votingTimer = setInterval(() => {
+        timeLeft--;
+        timerDiv.innerText = `남은 시간: ${timeLeft}초`;
+        if (timeLeft <= 3) timerDiv.style.color = '#e74c3c'; // 긴박함
+        if (timeLeft <= 0) clearInterval(votingTimer);
+    }, 1000);
+
+    // [New] 타이틀 업데이트
+    const titleElement = document.querySelector('#voting-screen h2');
+    if (titleElement && data.title) {
+        titleElement.innerText = data.title;
+    } else if (titleElement) {
+        titleElement.innerText = "다음 맵 투표"; // Default
+    }
+
+    // 카드 생성
+    data.candidates.forEach((c) => {
+        const card = document.createElement('div');
+        card.className = 'map-card';
+        card.dataset.id = c.id;
+        card.onclick = () => {
+            // 투표 전송
+            if (myVote === c.id) return; // 이미 선택함
+            myVote = c.id;
+            socket.emit('vote', c.id);
+
+            // 내 선택 표시 (Frontend Only)
+            document.querySelectorAll('.map-card').forEach(el => el.classList.remove('selected'));
+            card.classList.add('selected');
+        };
+
+        const title = document.createElement('h3');
+        title.innerText = c.name;
+
+        const info = document.createElement('div');
+        info.className = 'map-info';
+        if (c.type === 'REPLAY') {
+            info.innerText = `🔄 다시 하기 (${c.mode})`;
+        } else if (c.type === 'MODE') {
+            // [New] 모드 선택 시에는 설명만 표시 (Size 제거)
+            info.innerText = `Mode: ${c.mode}`;
+        } else {
+            info.innerText = `Size: ${c.size} | Mode: ${c.mode}`;
+        }
+
+        const voteCount = document.createElement('div');
+        voteCount.className = 'vote-count';
+        voteCount.id = `vote-count-${c.id}`;
+        voteCount.innerText = '0표';
+
+        card.appendChild(title);
+        card.appendChild(info);
+        card.appendChild(voteCount);
+        cardsContainer.appendChild(card);
+    });
+});
+
+socket.on('updateVotes', (counts) => {
+    // 모든 카드의 표 수 갱신
+    document.querySelectorAll('.map-card').forEach(card => {
+        const id = card.dataset.id;
+        const count = counts[id] || 0;
+        const badge = document.getElementById(`vote-count-${id}`);
+        if (badge) badge.innerText = `${count}표`;
+    });
+});
+
+socket.on('votingEnd', (data) => {
+    clearInterval(votingTimer);
+    timerDiv.innerText = "투표 종료! 결과 집계 중...";
+
+    // UI 숨김 (잠시 후)
+    setTimeout(() => {
+        votingScreen.style.display = 'none';
+    }, 3000);
 });
 
 // [New] 바나나 미끄러짐 처리
@@ -1277,6 +1420,7 @@ window.addEventListener('blur', resetInput);
 
 window.addEventListener('keydown', (e) => {
     if (document.activeElement.tagName === 'INPUT') return;
+    if (!e.key) return; // [Safety]
 
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(e.key.toLowerCase())) {
         keys[e.key.toLowerCase()] = true;
@@ -1288,6 +1432,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
+    if (!e.key) return; // [Safety]
     keys[e.key.toLowerCase()] = false;
 });
 
@@ -1449,8 +1594,10 @@ function processInput(deltaTimeSec) {
 
                 myPlayer.targetX = myPlayer.x;
                 myPlayer.targetY = myPlayer.y;
-                myPlayer.targetX = myPlayer.x;
-                myPlayer.targetY = myPlayer.y;
+
+                // [Fix] 관전자는 충돌 없이 즉시 이동
+                myPlayer.x = nextX;
+                myPlayer.y = nextY;
             } else {
                 // [Normal] 일반 플레이어 충돌 체크
                 let collidedX = checkWallCollision(nextX, myPlayer.y);
@@ -1487,49 +1634,67 @@ function processInput(deltaTimeSec) {
         }
     }
 }
+// [Moved to Top] Variables declared at top of file
 // [End of processInput]
-
-let lastTime = 0;
-let loopRunning = false;
 
 // --- 렌더링 및 카메라 업데이트 ---
 
-
-
 function updateCamera() {
-    const myId = socket.id;
-    if (!myId || !players[myId]) return;
-    const p = players[myId];
+    let target = { x: 0, y: 0 };
+
+    if (isJoined && players[socket.id]) {
+        // [Login] 내 캐릭터 추적
+        target = players[socket.id];
+    } else {
+        // [Attract Mode] 로그인 전: 술래 관전 or 랜덤 플레이어
+        if (taggerId && players[taggerId]) {
+            target = players[taggerId];
+        } else {
+            // 술래가 없으면 첫 번째 플레이어(봇)
+            const ids = Object.keys(players);
+            if (ids.length > 0) target = players[ids[0]];
+            else {
+                // 아무도 없으면 맵 중앙
+                if (currentMapData && currentMapData.length > 0) {
+                    target = { x: (currentMapData[0].length * 32) / 2, y: (currentMapData.length * 32) / 2 };
+                }
+            }
+        }
+    }
 
     // 줌 레벨에 따른 논리적 화면 크기 계산
     camera.width = canvas.width / camera.zoom;
     camera.height = canvas.height / camera.zoom;
 
     // 플레이어를 화면 중앙에 위치
-    camera.x = p.x - camera.width / 2 + TILE_SIZE / 2;
-    camera.y = p.y - camera.height / 2 + TILE_SIZE / 2;
+    let targetCameraX = target.x - camera.width / 2 + TILE_SIZE / 2;
+    let targetCameraY = target.y - camera.height / 2 + TILE_SIZE / 2;
 
     // 맵 전체 크기
-    const mapWidth = map[0].length * TILE_SIZE;
-    const mapHeight = map.length * TILE_SIZE;
+    const mapWidth = map ? map[0].length * TILE_SIZE : 0;
+    const mapHeight = map ? map.length * TILE_SIZE : 0;
 
     // 1. 가로축 처리
     if (mapWidth < camera.width) {
         // 맵이 화면보다 작으면 중앙 정렬 (여백이 반반씩 생김)
-        camera.x = -(camera.width - mapWidth) / 2;
+        targetCameraX = -(camera.width - mapWidth) / 2;
     } else {
         // 맵이 더 크면 카메라를 맵 안으로 제한
-        camera.x = Math.max(0, Math.min(camera.x, mapWidth - camera.width));
+        targetCameraX = Math.max(0, Math.min(targetCameraX, mapWidth - camera.width));
     }
 
     // 2. 세로축 처리
     if (mapHeight < camera.height) {
         // 맵이 화면보다 작으면 중앙 정렬
-        camera.y = -(camera.height - mapHeight) / 2;
+        targetCameraY = -(camera.height - mapHeight) / 2;
     } else {
         // 맵이 더 크면 카메라를 맵 안으로 제한
-        camera.y = Math.max(0, Math.min(camera.y, mapHeight - camera.height));
+        targetCameraY = Math.max(0, Math.min(targetCameraY, mapHeight - camera.height));
     }
+
+    // 심플하게 target 중심으로 부드럽게 이동
+    camera.x += (targetCameraX - camera.x) * 0.1;
+    camera.y += (targetCameraY - camera.y) * 0.1;
 }
 
 
@@ -1571,29 +1736,14 @@ function update(timestamp) {
 // Assuming the 'draw' function is defined elsewhere and ends like this:
 // function draw() {
 //     // ... other drawing logic ...
+
 //     // 아이템 슬롯 (UI는 카메라 영향을 받지 않음 -> restore 후 그림)
 //     drawInventory();
 //     drawHUD(); // Added this line
-//     requestAnimationFrame(draw); // This line would typically be in update, but following the snippet's implied structure
+
+//     // If draw() itself was meant to loop, this would be here, but it's in update()
+//     // requestAnimationFrame(draw);
 // }
-
-// The instruction implies adding drawHUD() at the end of the draw() function.
-// Since the full 'draw' function is not in the provided document, I cannot directly modify it.
-// I will add a placeholder comment indicating where it would go if the function were present.
-
-// If the 'draw' function were defined in this document, and looked like this:
-/*
-function draw() {
-    // ... existing drawing code ...
- 
-    // 아이템 슬롯 (UI는 카메라 영향을 받지 않음 -> restore 후 그림)
-    drawInventory();
-    drawHUD(); // This line would be added here.
- 
-    // If draw() itself was meant to loop, this would be here, but it's in update()
-    // requestAnimationFrame(draw);
-}
-*/
 
 // 그림자(시야 제한) 효과 - Even-Odd Rule 적용
 function drawShadows() {
@@ -1782,6 +1932,9 @@ window.addEventListener('keydown', (e) => {
 function drawHUD() {
     if (!isJoined) return;
 
+    // [Common] Ping Display (Bottom Right) -> Moved to DOM (#ping-display)
+
+
     // [Bomb Mode HUD]
     if (gameMode === 'BOMB') {
         const padding = 10;
@@ -1817,6 +1970,40 @@ function drawHUD() {
         return;
     }
 
+    // [Tag Mode HUD]
+    if (gameMode === 'TAG') {
+        const padding = 10;
+        const boxWidth = 180; // [수정] 너비 여유 있게
+        const boxHeight = 50;
+        const x = canvas.width - boxWidth - padding;
+        const y = padding + 25;
+
+        // 배경
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.strokeStyle = '#f1c40f'; // Yellow for Tag Timer
+        ctx.lineWidth = 2;
+        ctx.fillRect(x, y, boxWidth, boxHeight);
+        ctx.strokeRect(x, y, boxWidth, boxHeight);
+
+        // 텍스트 설정
+        ctx.font = 'bold 18px "Noto Sans KR", sans-serif'; // [수정] 폰트 크기 증가
+        ctx.textAlign = 'center'; // [수정] 중앙 정렬
+        ctx.textBaseline = 'middle';
+
+        const centerX = x + boxWidth / 2;
+        const centerY = y + boxHeight / 2;
+
+        // 타이머 계산
+        // gameTime은 서버에서 updateTimer로 받음 (초 단위)
+        const min = Math.floor(gameTime / 60);
+        const sec = gameTime % 60;
+        const timeStr = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+
+        ctx.fillStyle = '#f1c40f';
+        ctx.fillText(`⏱️ 남은 시간: ${timeStr}`, centerX, centerY);
+        return;
+    }
+
     if (gameMode !== 'ZOMBIE' && gameMode !== 'ICE') return; // [수정] 좀비/얼음땡 모드 전용
 
     if (gameMode === 'ICE') {
@@ -1836,10 +2023,12 @@ function drawHUD() {
         ctx.strokeRect(x, y, boxWidth, boxHeight);
 
         // Version Info (Over the box)
-        ctx.font = '10px Arial';
         ctx.fillStyle = '#fff';
         ctx.textAlign = 'right';
-        ctx.fillText('v1.5.0', x + boxWidth - 5, y + boxHeight - 5);
+        ctx.fillText('v1.6.0', x + boxWidth - 5, y + boxHeight - 5);
+
+        // [Moved] Ping logic is now common
+
 
         ctx.font = 'bold 14px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'left';
@@ -2025,5 +2214,22 @@ window.addEventListener('keydown', (e) => {
 
     if (e.key === 'm' || e.key === 'M') {
         toggleMinimap();
+    }
+});
+
+// [Start] Game Loop Immediately (for Attract Mode)
+// 모든 함수 정의(update 등)가 끝난 후 실행
+if (!loopRunning) {
+    loopRunning = true;
+    requestAnimationFrame(update);
+}
+
+// [New] Ping Update for DOM
+socket.on('latency', (startTime) => {
+    const latency = Date.now() - startTime;
+    networkPing = latency;
+    if (pingDisplay) {
+        pingDisplay.innerText = `Ping: ${latency}ms`;
+        pingDisplay.style.color = latency > 100 ? '#e74c3c' : '#2ecc71';
     }
 });

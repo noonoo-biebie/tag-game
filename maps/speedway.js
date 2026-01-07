@@ -1,5 +1,6 @@
 module.exports = {
     name: 'SPEEDWAY',
+    allowedSizes: ['M', 'L'],
     generate: function (rows = 60, cols = 60) {
         // [컨셉] 원형 트랙 (중앙은 벽, 트랙 폭 넓게)
         // 0: 빈 공간 (트랙), 1: 벽 (잔디/관중석)
