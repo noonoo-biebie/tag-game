@@ -7,7 +7,13 @@ const io = new Server(server);
 
 // [Safety] Global Error Handler
 process.on('uncaughtException', (err) => {
-    console.error('🔥 [CRITICAL] Uncaught Exception:', err);
+    console.error('💥 [CRITICAL] Uncaught Exception:', err);
+    // console.error(err.stack); // 필요 시 스택 트레이스 출력
+    // process.exit(1); // 디버깅을 위해 죽지 않게 할 수도 있음 (위험하지만)
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 [CRITICAL] Unhandled Rejection:', reason);
 });
 
 
@@ -33,7 +39,6 @@ app.get('/ping', (req, res) => {
 // 게임 상태 변수
 let players = {};
 let taggerId = null;
-let lastTaggerId = null; // 최근 술래 (봇 반격 방지용)
 // 맵 로드
 const MAPS_MODULE = loadMaps();
 console.log(`[Server] Maps loaded: ${Object.keys(MAPS_MODULE).join(', ')}`);
@@ -67,8 +72,8 @@ let itemNextId = 1;
 function spawnItem() {
     // [수정] 맵 크기에 따른 아이템 최대 개수 (동적 제한)
     const mapSize = currentMapData.length * currentMapData[0].length;
-    // 타일 300개당 1개, 최소 5개, 최대 50개
-    const maxItems = Math.min(50, Math.max(5, Math.floor(mapSize / 300)));
+    // 타일 600개당 1개, 최소 5개, 최대 30개 (밸런스 조정)
+    const maxItems = Math.min(30, Math.max(5, Math.floor(mapSize / 600)));
 
     if (Object.keys(items).length >= maxItems) {
         // 가장 오래된 아이템 삭제
@@ -133,8 +138,6 @@ function handleItemEffect(playerId, itemType) {
 // 아이템 획득 판정 (범위 30)
 function checkItemCollection(playerId) {
     const player = players[playerId];
-    if (!player) return;
-    if (player.isZombie) return; // 좀비는 아이템 획득 불가
     if (!player) return;
     if (player.isZombie) return; // 좀비는 아이템 획득 불가
     if (player.isSpectator) return; // [추가] 관전자 아이템 획득 불가
@@ -340,7 +343,10 @@ function checkCollision(moverId) {
     if (!mover) return;
 
     // 관전자는 충돌 무시
-    if (mover.isSpectator) return;
+    if (mover.isSpectator) {
+        // console.log(`[Collision] ${mover.nickname} is spectator.`);
+        return;
+    }
 
     // 모드별 로직 분기
     if (gameMode === 'TAG') {
@@ -353,9 +359,6 @@ function checkCollision(moverId) {
             for (const targetId in players) {
                 if (targetId === moverId) continue;
                 const target = players[targetId];
-                if (targetId === lastTaggerId) {
-                    // 방금 술래였던 사람은 잠깐 안전? (여기선 생략, lastTagger logic is mainly for bots)
-                }
 
                 const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
                 if (dist < 30) {
@@ -371,7 +374,6 @@ function checkCollision(moverId) {
                     }
 
                     // 태그 성공
-                    lastTaggerId = taggerId;
                     taggerId = targetId;
                     // 새 술래 기절 처리 (2초)
                     if (players[taggerId]) {
@@ -666,7 +668,6 @@ function startRoundTimer(seconds) {
                 io.emit('gameResult', resultData);
 
                 // 10초 후 리셋
-                // 10초 후 리셋
                 setTimeout(() => resetGame(), 10000);
             } else if (gameMode === 'ICE') {
                 // [얼음땡 도망자 승리] (시간 초과)
@@ -678,38 +679,44 @@ function startRoundTimer(seconds) {
 
 // 봇 생성
 function createBot() {
-    // [버그 수정] Date.now() 중복 방지를 위해 난수 추가
-    const botId = 'bot_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-    // [Safety] 봇 생성 시 안전 좌표 강제 적용
-    const spawn = getRandomSpawn(currentMapData, validSpawnPoints);
+    try {
+        // [버그 수정] Date.now() 중복 방지를 위해 난수 추가
+        const botId = 'bot_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
 
-    // Bot 생성자에 좌표 전달 불가 시, 생성 후 덮어쓰기
-    const bot = new Bot(botId, currentMapData);
-    bot.x = spawn.x;
-    bot.y = spawn.y;
-    bot.targetX = spawn.x;
-    bot.targetY = spawn.y;
+        // [Safety] 맵 데이터 확인
+        if (!currentMapData || !currentMapData.length) {
+            console.error('[CreateBot] No map data available');
+            return;
+        }
 
-    // [통계] 봇 통계 초기화
-    bot.stats = { distance: 0, infectionCount: 0, survivalTime: 0 };
+        // [Safety] 봇 생성 시 안전 좌표 강제 적용
+        const spawn = getRandomSpawn(currentMapData, validSpawnPoints);
 
-    // 성격 설정 (봇 밸런싱) - bot.js 내부 로직 활용하지만 여기서 players 넘겨주면 더 좋음
-    // Bot 생성자 내 getRandomPersonality는 인자 없으면 랜덤.
-    // players 정보를 넘겨주기 위해 여기서 다시 호출하거나, bot.js 설계를 따름.
-    // 현재 구현: Bot 생성자에서 기존 personality 분포 확인 로직은 existingPlayers 인자가 필요함.
-    // 하지만 위 코드에서는 인자 없이 호출 -> 랜덤.
-    // 개선: Bot 초기화 후 재할당
-    bot.personality = bot.getRandomPersonality(players);
+        // Bot 생성자에 좌표 전달 불가 시, 생성 후 덮어쓰기
+        const bot = new Bot(botId, currentMapData);
+        bot.x = spawn.x;
+        bot.y = spawn.y;
+        bot.targetX = spawn.x;
+        bot.targetY = spawn.y;
 
-    players[botId] = bot;
+        // [통계] 봇 통계 초기화
+        bot.stats = { distance: 0, infectionCount: 0, survivalTime: 0 };
 
-    io.emit('newPlayer', bot);
-    io.emit('gameMessage', `🤖 [${bot.personality}] 성격의 봇이 입장했습니다!`);
+        // 성격 설정 (봇 밸런싱) - bot.js 내부 로직 활용하지만 여기서 players 넘겨주면 더 좋음
+        bot.personality = bot.getRandomPersonality(players);
 
-    if (!taggerId) {
-        taggerId = botId;
-        io.emit('updateTagger', taggerId);
-        io.emit('gameMessage', `[${bot.nickname}] 님이 첫 술래입니다!`);
+        players[botId] = bot;
+
+        io.emit('newPlayer', bot);
+        io.emit('gameMessage', `🤖 [${bot.personality}] 성격의 봇이 입장했습니다!`);
+
+        if (!taggerId) {
+            taggerId = botId;
+            io.emit('updateTagger', taggerId);
+            io.emit('gameMessage', `[${bot.nickname}] 님이 첫 술래입니다!`);
+        }
+    } catch (e) {
+        console.error("🔥 [CreateBotError]", e);
     }
 }
 
@@ -805,18 +812,15 @@ function resetGame() {
     io.emit('updateTraps', traps);
 
     // [추가] 랜덤 맵인 경우 리셋 시 구조 재생성
-    if (currentMapName === 'BACKROOMS') {
+    // [Fix] 모든 동적 맵(generate 함수 보유)에 대해 구조 재생성 적용
+    if (MAPS_MODULE[currentMapName] && MAPS_MODULE[currentMapName].generate) {
         try {
-            console.log('[Reset] Backrooms 재생성...');
-            currentMapData = generateBackrooms(60, 60);
+            console.log(`[Reset] Regenerating map: ${currentMapName}`);
+            currentMapData = MAPS_MODULE[currentMapName].generate(60, 60);
             io.emit('mapUpdate', currentMapData);
-        } catch (e) { console.error(e); }
-    } else if (currentMapName === 'OFFICE') {
-        currentMapData = generateOffice(60, 60);
-        io.emit('mapUpdate', currentMapData);
-    } else if (currentMapName === 'MAZE_BIG') {
-        currentMapData = generateMazeBig(60, 60);
-        io.emit('mapUpdate', currentMapData);
+        } catch (e) {
+            console.error(`[Reset] Map generation failed for ${currentMapName}:`, e);
+        }
     }
     // [Fix] 맵 변경/리셋 시 안전한 스폰 지점 재계산 (validSpawnPoints 갱신)
     // analyzeMapConnectivity가 server.js 상단에 require 되어 있는지 확인 필요
@@ -824,20 +828,24 @@ function resetGame() {
     validSpawnPoints = analyzeMapConnectivity(currentMapData);
     console.log(`[Reset] Recalculated valid spawn points: ${validSpawnPoints.length}`);
 
-    // [Fix] 아이템 밸런스: 맵 크기에 비례하여 초기값 설정 (Min 5, Max 30)
+    // [Fix] 아이템 리필 (맵 크기 비례)
     const mapSize = currentMapData.length * currentMapData[0].length;
-    const initialItemCount = Math.min(30, Math.max(5, Math.floor(mapSize / 600)));
+    // MAX 계산식과 동일하게 맞춤 (타일 600개당 1개, 최소 5개, 최대 30개)
+    const maxItems = Math.min(30, Math.max(5, Math.floor(mapSize / 600)));
 
-    console.log(`[Reset] Spawning ${initialItemCount} items (MapSize: ${mapSize})`);
+    // 초기에는 Max의 80% 정도만 채우기 (여유 공간 확보)
+    const initialItemCount = Math.floor(maxItems * 0.8);
 
+    items = {}; // Reset items
     for (let i = 0; i < initialItemCount; i++) {
         const span = getRandomSpawn(currentMapData, validSpawnPoints);
-        // 아이템 ID 생성
         const itemId = `item_${Date.now()}_${i}`;
         const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
         items[itemId] = { x: span.x, y: span.y, type: type };
     }
     io.emit('updateItems', items);
+
+    console.log(`[Reset] Spawning ${initialItemCount} items (Max: ${maxItems}) for map size ${mapSize}`);
 
     // Clear timer
     if (iceCountdownTimer) {
@@ -1047,7 +1055,6 @@ function handleJoinGame(socket, data) {
     socket.emit('updateTagger', taggerId);
 
     socket.broadcast.emit('newPlayer', players[socket.id]);
-    // [추가] 접속자 수 갱신 브로드캐스트
     // [추가] 접속자 수 갱신 브로드캐스트 (봇 제외)
     const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
     io.emit('playerCountUpdate', realUserCount);
@@ -1182,15 +1189,21 @@ function handleChatMessage(socket, msg) {
             if (count > 50) count = 50; // Max 50
         }
 
-        let spawnedCount = 0;
+        let spawnedBots = [];
+        let spawnedCount = 0; // [Fix] Declaration
         for (let i = 0; i < count; i++) {
             // createBot 함수가 있다면 사용, 아니면 인라인
             // 안전하게 인라인으로 구현 (ID 충돌 방지)
             const botId = 'bot_' + Date.now() + '_' + Math.floor(Math.random() * 10000) + '_' + i;
             const bot = new Bot(botId, currentMapData);
             players[bot.id] = bot;
+            spawnedBots.push(bot);
             spawnedCount++;
         }
+
+        // [Fix] 봇 생성 즉시 클라이언트에 알림
+        // 일괄 전송 (currentPlayers) 하는 것이 가장 확실함
+        io.emit('currentPlayers', players);
 
         const infoMsg = `[System] 봇 ${spawnedCount}마리를 소환했습니다! 🤖`;
         io.emit('gameMessage', infoMsg);
@@ -1422,8 +1435,6 @@ function handleChatMessage(socket, msg) {
         socket.emit('chatMessage', { nickname: 'System', message: infoMsg, playerId: 'system' });
         return;
     }
-
-    // [추가] 관전 모드 토글 (/spec)
     if (cmd === '/spec' || cmd === '/spectator') {
         player.isManualSpectator = !player.isManualSpectator;
         player.isSpectator = player.isManualSpectator;
@@ -1497,53 +1508,83 @@ function handleChatMessage(socket, msg) {
 
 // [수정] 아이템 자동 관리 루프 (5초마다)
 setInterval(() => {
-    // 맵 크기 기반 목표 개수
-    const mapSize = currentMapData.length * currentMapData[0].length;
+    try {
+        // 맵 크기 기반 목표 개수
+        const mapSize = currentMapData.length * currentMapData[0].length;
+        const maxItems = Math.min(50, Math.max(5, Math.floor(mapSize / 300)));
 
-    // [Balance] 맵이 600타일 늘어날 때마다 아이템 1개 추가 (Min 5, Max 30)
-    // 기존: 300타일 -> 너무 많았음. 600으로 조정
-    const maxItems = Math.min(30, Math.max(5, Math.floor(mapSize / 600)));
-
-    if (Object.keys(items).length < maxItems) {
-        // 생성 확률 50% -> 너무 높음
-        // 100%로 채우되, 5초마다는 너무 빠름 -> 루프는 유지하되 확률 적용?
-        // 일단 무조건 채우는 방식 유지하되, Max 개수를 줄였으므로 밸런스 조절됨.
-        spawnItem();
+        // 부족하면 스폰
+        if (Object.keys(items).length < maxItems) {
+            spawnItem();
+            // io.emit('gameMessage', `🎁 선물 상자가 나타났습니다!`); // 너무 자주 뜨면 시끄러우니 제거 or 조건부
+        }
+    } catch (e) {
+        console.error("[ItemSpawnError]", e);
     }
 }, 5000);
 
 // 초기 아이템 및 테스트 바나나
+// 초기 아이템 및 테스트 바나나
 setTimeout(() => {
-    spawnItem(); spawnItem();
-
-
+    try {
+        spawnItem(); spawnItem();
+    } catch (e) {
+        console.error("[InitSpawnError]", e);
+    }
 }, 1000);
 
 // 게임 루프 (봇 업데이트)
 setInterval(() => {
+    // [Debug] 심장박동 확인 (10번에 1번)
+    if (Math.random() < 0.1) {
+        // console.log(`[Heartbeat] Game Loop Running. Players: ${Object.keys(players).length}`);
+    }
+
     try {
-        Object.keys(players).forEach(id => {
-            if (players[id] instanceof Bot) {
+        const playerIds = Object.keys(players);
+        playerIds.forEach(id => {
+            const p = players[id];
+            // [Fix] 봇 인식 강화: isBot, 닉네임, ID 모든 조건 확인
+            const isBotUser = p && (p.isBot || (p.nickname && (p.nickname.includes('🤖') || p.nickname.includes('Bot'))) || id.startsWith('bot_'));
+
+            if (isBotUser) {
                 // [중요] 봇에게 게임 state와 callback 전달
                 // gameMode 추가 전달 (BOMB 모드면 bombHolderId를 술래로 취급)
                 const currentTaggerId = (gameMode === 'BOMB') ? bombHolderId : taggerId;
 
-                players[id].update(players, currentTaggerId, lastTaggerId, {
-                    handleItemEffect: handleItemEffect,
-                    handleBotAction: handleBotAction
-                }, currentMapData, gameMode);
+                // [Debug] 봇 업데이트 확인 (1% 확률로 로그)
+                // [Debug] 봇 업데이트 확인 (무조건 출력)
+                // if (Math.random() < 0.001) 
+                // [Debug] 로그 폭주 방지 (1초에 한 번만 상태 출력)
+                const now = Date.now();
+                if (!players[id].lastDebugLog || now - players[id].lastDebugLog > 1000) {
+                    players[id].lastDebugLog = now;
+                    console.log(`[BotStatus] ${players[id].nickname} Pos:(${Math.floor(players[id].x)},${Math.floor(players[id].y)}) Dir:(${players[id].moveDir.x.toFixed(2)},${players[id].moveDir.y.toFixed(2)}) Stun:${players[id].stunnedUntil} Frozen:${players[id].isFrozen} Target:${players[id].targetX},${players[id].targetY}`);
+                }
 
-                // 동기화
-                io.emit('playerMoved', players[id]);
-                checkCollision(id);
-                checkItemCollection(id);
-                checkTrapCollision(id);
+                try {
+                    players[id].update(players, currentTaggerId, lastTaggerId, {
+                        handleItemEffect: handleItemEffect,
+                        handleBotAction: handleBotAction
+                    }, currentMapData, gameMode);
+                    // 동기화
+                    io.emit('playerMoved', players[id]);
+                    checkCollision(id);
+                    checkItemCollection(id);
+                    checkTrapCollision(id);
 
-                // [Fix] 바나나(isSlipped) 상태 해제 체크
-                if (players[id].isSlipped && players[id].slipStartTime) {
-                    if (Date.now() - players[id].slipStartTime > 3000) {
-                        players[id].isSlipped = false;
-                        players[id].slipStartTime = 0;
+                    // [Fix] 바나나(isSlipped) 상태 해제 체크
+                    if (players[id].isSlipped && players[id].slipStartTime) {
+                        if (Date.now() - players[id].slipStartTime > 3000) {
+                            players[id].isSlipped = false;
+                            players[id].slipStartTime = 0;
+                        }
+                    }
+                } catch (botErr) {
+                    const now = Date.now();
+                    if (!players[id].lastErrorLog || now - players[id].lastErrorLog > 1000) {
+                        players[id].lastErrorLog = now;
+                        console.error(`[WrapperError] Bot ${players[id]?.nickname} processing failed:`, botErr);
                     }
                 }
             }
@@ -1559,6 +1600,8 @@ setInterval(() => {
             // Suppress
         } else {
             console.error("GameLoop Error:", e);
+            // [Debug] 봇 업데이트 실패 상세 원인 파악
+            console.error(e.stack);
             io.emit('serverError', { msg: `GameLoop Error: ${e.message}`, level: 'critical' });
         }
     }

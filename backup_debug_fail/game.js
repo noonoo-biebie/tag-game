@@ -26,7 +26,7 @@ const chatMessages = document.getElementById('chat-messages');
 const COMMAND_DATA = {
     '/reset': { desc: '🔄 게임 리셋', args: [] },
     '/mode': { desc: '🎮 모드 변경', args: ['zombie', 'tag', 'bomb', 'ice'] },
-    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'SPEEDWAY', 'FOREST', 'STADIUM', 'OFFICE', 'BACKROOMS', 'MAZE_BIG', 'LAVA_RUN', 'ANT_TUNNEL', 'CAVE', 'INFERNO', 'MUD_RUN'] },
+    '/map': { desc: '🗺️ 맵 변경', args: ['DEFAULT', 'MAZE', 'SPEEDWAY', 'FOREST', 'STADIUM', 'OFFICE', 'BACKROOMS', 'MAZE_BIG', 'LAVA_RUN', 'MUD_RUN', 'INFERNO', 'ANT_TUNNEL', 'CAVE'] },
     '/bot': { desc: '🤖 봇 소환 [숫자]', args: [] },
     '/spec': { desc: '👻 관전 모드 토글', args: [] },
     '/kickbot': { desc: '👋 봇 전체 추방', args: [] },
@@ -34,6 +34,7 @@ const COMMAND_DATA = {
     '/fog': { desc: '🌫️ 시야 토글', args: [] },
     '/item': { desc: '⚡ 치트 아이템', args: ['speed', 'banana', 'shield'] },
     '/minimap': { desc: '🗺️ 미니맵 보기', args: [] },
+    '/info': { desc: '📊 맵/아이템 정보 확인', args: [] },
     '/reveal': { desc: '👁️ 전체 플레이어 보기 (치트)', args: [] }
 };
 
@@ -376,7 +377,6 @@ socket.on('joinSuccess', (myInfo) => {
     };
 
     // [Fix] 중복 실행 방지 (기존 타이머 제거)
-    // [Fix] 중복 실행 방지 (기존 타이머 제거)
     if (keepAliveInterval) clearInterval(keepAliveInterval);
     if (keepAliveTimeout) clearTimeout(keepAliveTimeout);
 
@@ -427,7 +427,6 @@ socket.on('playerMoved', (playerInfo) => {
             players[socket.id].stunnedUntil = playerInfo.stunnedUntil;
 
             // [관전 모드 동기화]
-            players[socket.id].isSpectator = playerInfo.isSpectator;
             // [관전 모드 동기화]
             players[socket.id].isSpectator = playerInfo.isSpectator;
 
@@ -623,10 +622,10 @@ socket.on('gameMessage', (msg) => {
 
     // 버전 정보 표시 (입장 시)
     if (msg.includes('입장했습니다')) {
-        gameMessage.innerText = '달리고 잡기 v1.4.2 (안전 스폰 로직 개선)';
+        gameMessage.innerText = '달리고 잡기 v1.5.0 (밸런스 조정 및 최적화)';
     }
     setTimeout(() => {
-        gameMessage.innerText = '달리고 잡기 v1.4.2 (안전 스폰 로직 개선)';
+        gameMessage.innerText = '달리고 잡기 v1.5.0 (밸런스 조정 및 최적화)';
     }, 5000);
 });
 
@@ -1841,7 +1840,7 @@ function drawHUD() {
         ctx.font = '10px Arial';
         ctx.fillStyle = '#fff';
         ctx.textAlign = 'right';
-        ctx.fillText('v1.4.2', x + boxWidth - 5, y + boxHeight - 5);
+        ctx.fillText('v1.5.0', x + boxWidth - 5, y + boxHeight - 5);
 
         ctx.font = 'bold 14px "Noto Sans KR", sans-serif';
         ctx.textAlign = 'left';

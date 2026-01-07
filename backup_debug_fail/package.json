@@ -1,6 +1,6 @@
 {
   "name": "tag-game",
-  "version": "1.5.1",
+  "version": "1.5.0",
   "description": "Real-time multiplayer tag game",
   "main": "server.js",
   "scripts": {

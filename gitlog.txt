@@ -1,0 +1,30 @@
+﻿3a502a2 留??뺤옣(Cave, Ant Tunnel, Inferno ?? 諛?Glacier ??젣. (Known Issue: 遊??대룞 遺덇? 踰꾧렇)
+2fdb175 1.5.0 ?낅뜲?댄듃: ?꾩씠??諛몃윴??議곗젙 諛?肄붾뱶 由ы뙥?좊쭅 (理쒖쟻??
+6933f4c 1.4.2 ?낅뜲?댄듃: ?덉쟾 ?ㅽ룿 濡쒖쭅 媛쒖꽑(釉붾옓由ъ뒪?? 諛?SPEEDWAY 留?諛몃윴??議곗젙
+734a2f7 1.4.1 ?낅뜲?댄듃: ?ㅽ룿 踰꾧렇 ?섏젙 諛?留?媛쒖꽑 (Ice/Mud)
+b4161bf Update version text to Korean (?뱀닔 ???異붽?!)
+7d751cf Fix login screen version display location
+cc220bb Bump version to v1.4.0 (Special Tiles Added!)
+464bd81 Implement Bot Tile Physics (Lava Knockback, Mud Slow)
+3bf1fbd Implement Advanced Tile System (Lava, Ice, Mud) and Safe Physics
+7d85c6e v1.3.3: Implement Modular Map System, New Maps (Speedway, Forest, Stadium), and Safe Spawn Logic
+367cb20 v1.3.2 (?쇱쓬??遊?異붽?!)
+19513cd v1.3.1 ?쇱쓬??紐⑤뱶 媛쒖꽑, ?쇰뱶諛?踰꾪듉 ?꾩튂 蹂寃? ?쒕쾭 ?뺤씤 ?쒖뒪??以묐났 踰꾧렇 ?닿껐
+20d8a22 ?쇱쓬紐⑤뱶 異붽?!
+c8b3e47 Refactor: 肄붾뱶 ?泥?냼 諛?理쒖쟻??(Dead code ?쒓굅, 以묐났 濡쒖쭅 ?뺣━)
+054311e v1.2 ?ロ뵿?? 醫鍮?紐⑤뱶 醫낅즺 踰꾧렇 ?섏젙 諛??몄썝 鍮꾨? ?숈＜ 諛몃윴??議곗젙
+c485724 v1.2 ?낅뜲?댄듃: 醫鍮?紐⑤뱶 諛몃윴??議곗젙(?숈＜ 2紐? 2遺?0珥? 諛?媛?대뱶 ??湲곕뒫 異붽?
+b9979f9 UI 媛쒖꽑: ?묒냽????吏묎퀎?먯꽌 遊??쒖쇅 諛?踰꾩쟾 ?띿뒪??v1.1濡??낅뜲?댄듃
+fb1ad64 Update Doc: Set version to v1.1 (Bomb Mode Added) in UI
+330c3ed Release v1.1.0: Bomb Mode Stability Update & Visual Improvements
+86e8678 Add Keep-Alive PING system for Render server
+03dcc38 Refactor Bot Code & Cleanup Dead Code
+156c048 Fix Bot Memory, Shield Bug, Item Spawn, Reveal Command
+1de80f1 醫鍮?AI ?묒뾽 ???덉젙?? 醫鍮??ㅽ꽩, 寃곌낵?? 踰꾧렇 ?섏젙
+c3d732f 醫鍮?紐⑤뱶 ?꾩꽦: 寃곌낵?? ?됰꽕??蹂寃? 媛먯뿼 湲곗젅 濡쒖쭅 異붽?
+2760848 Backrooms 留??앹꽦 ?뚭퀬由ъ쬁 ?꾨㈃ 媛쒗렪: 援ъ뿭(Zone) 湲곕컲 ?앹꽦 諛?怨좊┰??吏???꾩쿂由?異붽?, Wide 援ъ뿭 ?낃뎄 媛쒖꽑
+2e3792b feat: Enhance Backrooms map generation with multi-zones (Maze, Open, Pattern, Wide) and add Office map mode
+fac7d88 v1.0.3 Release: 紐낅졊???먮룞?꾩꽦(???쒗솚/?몄옄), ?ㅼ떆媛?媛?대뱶 UI, ?ㅽ뻾 ?뚮┝ 異붽?
+85864c4 v1.0.2 Release: 醫鍮?紐⑤뱶 ??대㉧(3遺?, 遊?AI 媛뺥솕(異붽꺽 硫붾え由??щ챸踰??닿껐), 媛곸쥌 踰꾧렇 ?섏젙
+01fa540 v1.0.1 Release: 醫鍮?紐⑤뱶 ?꾩씠??由ъ뀑 踰꾧렇 ?섏젙 諛??붾쾭洹?濡쒓렇 ?쒓굅
+0d32745 v1.0.0 Release: 醫鍮?紐⑤뱶 媛먯뿼 ?쒖뒪?? 諛붾굹???몃옪 ?섏젙, HUD 援ы쁽 諛?踰꾧렇 ?섏젙 ?꾨즺

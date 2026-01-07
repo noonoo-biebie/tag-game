@@ -1,0 +1,472 @@
+﻿@charset "UTF-8";
+
+/* Reset & Basic Setup */
+* {
+    box-sizing: border-box;
+    touch-action: none;
+    /* Disable gestures like pinch-zoom */
+}
+
+/* Allow interaction with inputs (for nickname) */
+input {
+    touch-action: auto;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    /* Prevent scrolling */
+    background-color: #2c3e50;
+    color: #ecf0f1;
+    font-family: 'Noto Sans KR', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* Main Layout Container */
+#game-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    position: relative;
+}
+
+/* Header (Title & Message) */
+h1 {
+    font-size: 1.2rem;
+    margin: 10px 0 5px 0;
+    color: #f1c40f;
+    flex-shrink: 0;
+}
+
+#game-message {
+    height: 20px;
+    font-size: 0.9rem;
+    color: #e67e22;
+    margin-bottom: 5px;
+    flex-shrink: 0;
+}
+
+/* Login Screen (Overlay) */
+#login-screen {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.85);
+    padding: 30px;
+    border-radius: 15px;
+    width: 80%;
+    max-width: 350px;
+    z-index: 5000;
+    text-align: center;
+}
+
+#nickname-input {
+    width: 70%;
+    padding: 10px;
+    margin-bottom: 10px;
+    border: none;
+    border-radius: 5px;
+}
+
+#color-input {
+    width: 20%;
+    height: 40px;
+    border: none;
+    vertical-align: middle;
+}
+
+#start-btn {
+    width: 100%;
+    padding: 12px;
+    background: #f1c40f;
+    border: none;
+    border-radius: 5px;
+    font-weight: bold;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+/* Game Area (Centered Canvas) */
+#main-content {
+    flex: 1;
+    /* Take remaining space */
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+canvas {
+    background-color: #34495e;
+    border: 2px solid #ecf0f1;
+    image-rendering: pixelated;
+
+    /* Responsive Canvas Scaling */
+    width: auto;
+    height: auto;
+    max-width: 98vw;
+    max-height: 60vh;
+}
+
+/* Chat (Hidden on Mobile) */
+#chat-container {
+    display: none;
+}
+
+#chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    text-align: left;
+    font-size: 14px;
+    color: #ecf0f1;
+    word-wrap: break-word;
+}
+
+#chat-input {
+    padding: 8px;
+    border-radius: 4px;
+    border: none;
+    width: 100%;
+    font-family: inherit;
+}
+
+/* Mobile Controls (Bottom Area) */
+#mobile-controls {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    /* 오버레이처럼 동작 */
+    z-index: 1000;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 20px;
+}
+
+#joystick-zone {
+    flex: 1;
+    /* 남은 공간 차지 (왼쪽 영역) */
+    height: 100%;
+    /* background 및 border 제거 */
+    pointer-events: auto;
+    /* 터치 가능하게 */
+    margin-right: 20px;
+    position: relative;
+    /* nipple.js 위치 기준점 */
+    /* 터치 영역 시각화 (테스트용 - 필요 시 제거 가능) */
+    /* background: rgba(255, 0, 0, 0.1); */
+}
+
+#mobile-item-btn {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    background: rgba(241, 196, 15, 0.8);
+    border: 4px solid #f39c12;
+    color: white;
+    font-size: 1.2rem;
+    font-weight: bold;
+    pointer-events: auto;
+    margin-bottom: 20px;
+    margin-right: 20px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+#mobile-item-btn:active {
+    background: #f39c12;
+    transform: scale(0.95);
+}
+
+/* PC Overrides */
+@media (min-width: 768px) {
+    #mobile-controls {
+        display: none;
+    }
+
+    #main-content {
+        flex-direction: row;
+        align-items: flex-start;
+        height: auto;
+        flex: auto;
+    }
+
+    canvas {
+        max-width: none;
+        max-height: none;
+        margin-right: 20px;
+    }
+
+    #chat-container {
+        display: flex;
+        flex-direction: column;
+        width: 250px;
+        height: 480px;
+        background-color: rgba(0, 0, 0, 0.5);
+        border-radius: 5px;
+        padding: 10px;
+        margin: 0;
+        position: static;
+        transform: none;
+    }
+
+    #chat-messages {
+        margin-bottom: 10px;
+    }
+}
+
+/* Helpers */
+/* Helpers */
+#error-log {
+    display: none;
+}
+
+#status-indicator {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: #e74c3c;
+    /* 기본: 연결 끊김 (Red) */
+    box-shadow: 0 0 10px #e74c3c;
+    display: block;
+    z-index: 9999;
+}
+
+/* Loading Overlay */
+#server-loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(44, 62, 80, 0.95);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    color: white;
+    text-align: center;
+}
+
+.loading-content h2 {
+    margin-bottom: 20px;
+    color: #f1c40f;
+}
+
+.spinner {
+    margin: 20px auto;
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top: 4px solid #f1c40f;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* Shake Animation */
+@keyframes shake {
+    0% {
+        transform: translate(1px, 1px) rotate(0deg);
+    }
+
+    10% {
+        transform: translate(-1px, -2px) rotate(-1deg);
+    }
+
+    20% {
+        transform: translate(-3px, 0px) rotate(1deg);
+    }
+
+    30% {
+        transform: translate(3px, 2px) rotate(0deg);
+    }
+
+    40% {
+        transform: translate(1px, -1px) rotate(1deg);
+    }
+
+    50% {
+        transform: translate(-1px, 2px) rotate(-1deg);
+    }
+
+    60% {
+        transform: translate(-3px, 1px) rotate(0deg);
+    }
+
+    70% {
+        transform: translate(3px, 1px) rotate(-1deg);
+    }
+
+    80% {
+        transform: translate(-1px, -1px) rotate(1deg);
+    }
+
+    90% {
+        transform: translate(1px, 2px) rotate(0deg);
+    }
+
+    100% {
+        transform: translate(1px, -2px) rotate(-1deg);
+    }
+}
+
+.shake-effect {
+    animation: shake 0.5s;
+    animation-iteration-count: 1;
+}
+
+/* Tagged Overlay Text */
+#tagged-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 3rem;
+    font-weight: bold;
+    color: #e74c3c;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+    display: none;
+    z-index: 2000;
+    animation: popIn 0.3s ease-out;
+}
+
+@keyframes popIn {
+    0% {
+        transform: translate(-50%, -50%) scale(0);
+        opacity: 0;
+    }
+
+    80% {
+        transform: translate(-50%, -50%) scale(1.2);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+    }
+}
+
+/* 가이드 모달 스타일 */
+.modal {
+    position: fixed;
+    z-index: 9999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(3px);
+    animation: fadeIn 0.3s;
+}
+
+.modal-content.guide-content {
+    background-color: #2c3e50;
+    margin: 10% auto;
+    padding: 30px;
+    border: 1px solid #7f8c8d;
+    width: 90%;
+    max-width: 500px;
+    border-radius: 12px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+    color: white;
+    position: relative;
+    text-align: left;
+}
+
+.guide-content h2 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #f1c40f;
+    border-bottom: 2px solid #34495e;
+    padding-bottom: 15px;
+}
+
+.guide-section {
+    margin-bottom: 25px;
+}
+
+.guide-section h3 {
+    color: #bdc3c7;
+    margin-bottom: 12px;
+    font-size: 1.1em;
+    border-left: 4px solid #3498db;
+    padding-left: 10px;
+}
+
+.guide-section ul {
+    list-style: none;
+    padding: 0;
+}
+
+.guide-section li {
+    margin-bottom: 10px;
+    font-size: 0.95em;
+    line-height: 1.5;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 10px;
+    border-radius: 6px;
+}
+
+.guide-section .icon {
+    font-size: 1.2em;
+    margin-right: 8px;
+    display: inline-block;
+    width: 25px;
+    text-align: center;
+}
+
+.close-btn {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    position: absolute;
+    top: 15px;
+    right: 20px;
+    transition: color 0.2s;
+}
+
+.close-btn:hover {
+    color: white;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
