@@ -76,10 +76,43 @@ let lastTaggerId = null; // 최근 술래 (봇 반격 방지용)
 // [Duplicate Removed]
 console.log(`[Server] Maps loaded: ${Object.keys(MAPS_MODULE).join(', ')}`);
 if (!MAPS_MODULE['DEFAULT']) {
-    console.error("🔥 [CRITICAL] DEFAULT map not found in MAPS_MODULE!");
+    console.error("🔥 [CRITICAL] DEFAULT map not found!");
     process.exit(1);
 }
 
+const TIMEOUT_DURATION = 60 * 1000; // 1분 (사용자 입력 없을 때 연결 끊기용)
+
+// [Smart Tagger Selection] 최근 술래 기록 (중복 방지)
+let lastTaggers = [];
+const MAX_LAST_TAGGERS = 2; // 최근 2명은 제외
+
+function getSmartTagger(candidates) {
+    // 1. 제외할 ID 목록
+    const excludeIds = new Set(lastTaggers);
+
+    // 2. 후보 필터링
+    let validCandidates = candidates.filter(id => !excludeIds.has(id));
+
+    // 3. 만약 후보가 없으면(모두 최근에 술래 함) 리셋 후 전체 대상
+    if (validCandidates.length === 0) {
+        validCandidates = [...candidates];
+    }
+
+    if (validCandidates.length === 0) return null;
+
+    // 4. 랜덤 선택
+    const selected = validCandidates[Math.floor(Math.random() * validCandidates.length)];
+
+    // 5. 기록 업데이트
+    lastTaggers.push(selected);
+    if (lastTaggers.length > MAX_LAST_TAGGERS) {
+        lastTaggers.shift();
+    }
+
+    return selected;
+}
+
+// 맵 데이터 로드
 let currentMapName = 'DEFAULT';
 let currentMapData = MAPS_MODULE.DEFAULT.data || (MAPS_MODULE.DEFAULT.generate ? MAPS_MODULE.DEFAULT.generate() : []);
 
@@ -117,7 +150,7 @@ const VotingManager = {
     candidates: [],
     votes: {}, // { socketId: candidateIndex }
     timer: null,
-    duration: 10, // [Modified] 10초로 변경
+    duration: 15, // [Modified] 15초로 변경 (결과창 포함)
     currentStage: 'MODE', // 'MODE' | 'MAP'
 
     startModeVoting: function () {
@@ -596,7 +629,56 @@ function checkCollision(moverId) {
     if (mover.isSpectator) return;
 
     // 모드별 로직 분기
-    if (gameMode === 'TAG') {
+    if (gameMode === 'BOMB') {
+        if (!bombHolderId) return;
+
+        // 쿨타임 체크 (핑퐁 방지)
+        if (bombPassCooldown && Date.now() < bombPassCooldown) return;
+
+        // Check collision with bomb holder (Bidirectional)
+        let holder = null;
+        let victim = null;
+
+        if (moverId === bombHolderId) {
+            // Case 1: 폭탄 보유자가 움직여서 부딪힘
+            holder = mover;
+            // Target loop
+            for (const targetId in players) {
+                if (targetId === moverId) continue;
+                const target = players[targetId];
+                if (target.isSpectator) continue;
+
+                const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
+                if (dist < 32) {
+                    victim = target; // Found victim
+                    break;
+                }
+            }
+        } else {
+            // Case 2: 일반인이 움직여서 폭탄 보유자와 부딪힘
+            // Check distance to bomb holder
+            if (players[bombHolderId]) {
+                const target = players[bombHolderId];
+                const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
+                if (dist < 32) {
+                    holder = target;
+                    victim = mover; // I am the victim
+                }
+            }
+        }
+
+        if (holder && victim && !victim.isSpectator) {
+            // 폭탄 전달! (관전자 제외 확인)
+            console.log(`[BOMB] Pass: ${holder.nickname} -> ${victim.nickname}`);
+            bombHolderId = victim.id; // victim id
+            bombPassCooldown = Date.now() + 1000; // 1초간 재전달 금지
+
+            io.emit('updateTagger', bombHolderId);
+            io.emit('gameMessage', `💣 [${holder.nickname}] 님이 [${victim.nickname}] 님에게 폭탄을 넘겼습니다!`);
+            io.emit('effect', { type: 'bomb_pass', x: victim.x, y: victim.y });
+            return;
+        }
+    } else if (gameMode === 'TAG') {
         if (!taggerId) return;
         // 내가 술래일 때만 다른 사람 잡기 체크
         if (moverId === taggerId) {
@@ -905,7 +987,8 @@ function startRoundTimer(seconds) {
                 io.emit('gameResult', resultData);
 
                 // 10초 후 투표 시작
-                setTimeout(() => startVotingPhase(), 10000);
+                // [Modified] 결과창과 동시에 투표 시작
+                setTimeout(() => startVotingPhase(), 500);
 
             } else if (gameMode === 'ZOMBIE') {
                 // [생존자 승리]
@@ -1186,17 +1269,16 @@ function resetGame() {
             p.nickname = p.nickname.replace('🧟 ', '');
         }
 
-        // [BOMB] 관전 모드 해제 (단, 수동 관전자는 제외)
-        if (!p.isManualSpectator) {
-            p.isSpectator = false;
-            // [수정] 색상 복구 (폭탄 모드 탈락 등에서 변한 색상 원복)
-            // originalColor가 없으면 initialColor, 그것도 없으면 기본값
-            if (p.originalColor) p.color = p.originalColor;
-            else if (p.initialColor) p.color = p.initialColor;
-            else p.color = '#e74c3c'; // Fallback
-        } else {
-            p.color = 'rgba(255, 255, 255, 0.3)'; // 관전자 색상 유지
-        }
+        // [Modified] 모든 관전자 해제 (수동 관전자 포함)
+        // 다음 게임에는 모두 참여
+        p.isSpectator = false;
+        p.isManualSpectator = false; // 수동 관전 상태도 해제
+
+        // [수정] 색상 복구 (폭탄 모드 탈락 등에서 변한 색상 원복)
+        // originalColor가 없으면 initialColor, 그것도 없으면 기본값
+        if (p.originalColor) p.color = p.originalColor;
+        else if (p.initialColor) p.color = p.initialColor;
+        else p.color = '#e74c3c'; // Fallback
 
         // [통계] 초기화
         p.stats = { distance: 0, infectionCount: 0, survivalTime: 0 };
@@ -1215,31 +1297,32 @@ function resetGame() {
     }
 
     // 모드별 초기화
-    if (gameMode === 'TAG') {
-        // 생존자 중 한 명 술래? (보통 createBot이나 join에서 함)
-        // 리셋 시 술래 재선정
-        const ids = Object.keys(players);
-        if (ids.length > 0) {
-            taggerId = ids[Math.floor(Math.random() * ids.length)];
+    // [Smart Tagger Selection] 술래/폭탄 선정
+    const candidateIds = Object.keys(players).filter(id => !players[id].isSpectator);
+    if (candidateIds.length > 0) {
+        if (gameMode === 'BOMB') {
+            // 폭탄 모드는 startBombRound()에서 별도로 선정하므로 여기선 패스
+            // 단, startBombRound가 호출되도록 해야 함
+            setTimeout(() => startBombRound(), 1000);
+        } else if (gameMode === 'ZOMBIE') {
+            // 좀비 모드는 별도 카운트다운 로직 (startZombieCountdown) 사용
+            startZombieCountdown();
+        } else if (gameMode === 'ICE') {
+            // 얼음땡 술래 선정
+            taggerId = getSmartTagger(candidateIds);
             io.emit('updateTagger', taggerId);
+            io.emit('gameMessage', `🧊 [${players[taggerId].nickname}] 님이 술래입니다! 도망가세요!`);
+            startIceCountdown();
+        } else {
+            // [TAG Mode] 기본 술래잡기
+            taggerId = getSmartTagger(candidateIds);
+            io.emit('updateTagger', taggerId);
+            io.emit('gameMessage', `🏃 [${players[taggerId].nickname}] 님이 술래입니다!`);
+            startRoundTimer(240); // 4분
         }
-
-        // [New] 술래잡기 4분 타이머
-        io.emit('gameMessage', '⏱️ 4분 뒤 투표가 시작됩니다!');
-        startRoundTimer(240);
-    } else if (gameMode === 'ZOMBIE') {
-        taggerId = null; // 좀비 모드는 술래 개념 대신 좀비가 있음
-        io.emit('updateTagger', null);
-        startZombieCountdown();
-    } else if (gameMode === 'BOMB') {
-        taggerId = null;
-        startBombRound();
-    } else if (gameMode === 'ICE') {
-        taggerId = null;
-        io.emit('updateTagger', null); // [Fix] 클라이언트 술래 표시 제거
-        startIceCountdown();
+    } else {
+        io.emit('gameMessage', '⚠️ 플레이어가 부족합니다.');
     }
-
     io.emit('currentPlayers', players);
     io.emit('gameMode', gameMode); // [추가] 클라이언트에 게임 모드 전송
 
@@ -1979,7 +2062,11 @@ function startBombRound() {
         const currentSurvivors = Object.keys(players).filter(id => !players[id].isSpectator);
         if (currentSurvivors.length <= 1) return;
 
-        const holderId = currentSurvivors[Math.floor(Math.random() * currentSurvivors.length)];
+        // [Modified] 스마트 술래 선정 적용 (폭탄 시작)
+        // const holderId = currentSurvivors[Math.floor(Math.random() * currentSurvivors.length)];
+        const holderId = getSmartTagger(currentSurvivors);
+        if (!holderId) return; // 전원 제외 시 (발생 희박)
+
         bombHolderId = holderId;
 
         // 타이머: 설정값 or 30~40초 랜덤 (기본값 상향)
@@ -2061,11 +2148,11 @@ function updateBombGame() {
                     ]
                 };
                 io.emit('gameResult', resultData);
-                setTimeout(() => startVotingPhase(), 10000);
+                setTimeout(() => startVotingPhase(), 500);
             } else if (survivors.length === 0) {
                 // 모두 멸망? (동시 폭사 등)
                 io.emit('gameMessage', `💀 생존자가 없습니다... 게임 오버.`);
-                setTimeout(() => startVotingPhase(), 5000);
+                setTimeout(() => startVotingPhase(), 500);
             } else {
                 // 다음 라운드 진행
                 io.emit('gameMessage', `생존자 ${survivors.length}명 남았습니다. 다음 라운드 준비...`);
@@ -2084,13 +2171,10 @@ function startVotingPhase() {
     if (serverState === ServerState.VOTING) return;
 
     serverState = ServerState.VOTING;
-    io.emit('gameMessage', '🗳️ 잠시 후 투표가 시작됩니다!');
-    io.emit('chatMessage', { nickname: 'System', message: '🗳️ 투표 시작! 다음 게임 모드를 선택하세요.', playerId: 'system' });
+    io.emit('gameMessage', '🗳️ 투표 시작! 다음 게임 모드를 선택하세요.');
 
-    // 3초 대기 후 투표 시작 (결과 화면 감상 시간)
-    setTimeout(() => {
-        VotingManager.startModeVoting();
-    }, 3000);
+    // [Modified] 딜레이 없이 즉시 시작 (결과창과 동시에 진행)
+    VotingManager.startModeVoting();
 }
 
 server.listen(PORT, () => {

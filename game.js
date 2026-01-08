@@ -25,6 +25,7 @@ const colorInput = document.getElementById('color-input');
 const startBtn = document.getElementById('start-btn');
 const loadingOverlay = document.getElementById('server-loading-overlay'); // 추가
 const pingDisplay = document.getElementById('ping-display'); // [New]
+const CLIENT_VERSION = 'v2.0-test.2';
 
 
 // 채팅 요소
@@ -43,7 +44,8 @@ const COMMAND_DATA = {
     '/fog': { desc: '🌫️ 시야 토글', args: [] },
     '/item': { desc: '⚡ 치트 아이템', args: ['speed', 'banana', 'shield'] },
     '/minimap': { desc: '🗺️ 미니맵 보기', args: [] },
-    '/reveal': { desc: '👁️ 전체 플레이어 보기 (치트)', args: [] }
+    '/reveal': { desc: '👁️ 전체 플레이어 보기 (치트)', args: [] },
+    '/finish': { desc: '🛑 게임 강제 종료 (투표)', args: [] }
 };
 
 // 가이드 UI 생성
@@ -1057,10 +1059,24 @@ socket.on('votingEnd', (data) => {
     clearInterval(votingTimer);
     timerDiv.innerText = "투표 종료! 결과 집계 중...";
 
+    // [Bugfix] 클라이언트 게임 모드 즉시 갱신
+    if (data.mode) {
+        gameMode = data.mode;
+        console.log(`[Client] Game Mode Updated to: ${gameMode}`);
+    }
+
     // UI 숨김 (잠시 후)
     setTimeout(() => {
         votingScreen.style.display = 'none';
     }, 3000);
+});
+
+// [New] Explicit Game Mode Update Handler
+socket.on('gameMode', (mode) => {
+    if (gameMode !== mode) {
+        console.log(`[Client] Game Mode Synced: ${mode}`);
+        gameMode = mode;
+    }
 });
 
 // [New] 바나나 미끄러짐 처리
@@ -2231,5 +2247,28 @@ socket.on('latency', (startTime) => {
     if (pingDisplay) {
         pingDisplay.innerText = `Ping: ${latency}ms`;
         pingDisplay.style.color = latency > 100 ? '#e74c3c' : '#2ecc71';
+    }
+});
+
+// [New] 모든 결과창 닫기 버튼 로직 통합
+// 닫기 버튼을 누르면 결과창이 사라지고, 뒤에 있는 투표창(있는 경우)이 드러남
+const resultCloseMap = [
+    { btn: 'result-close-btn', screen: 'result-screen' },          // 기본/술래잡기
+    { btn: 'bomb-result-close-btn', screen: 'bomb-result-screen' }, // 폭탄
+    { btn: 'ice-result-close-btn', screen: 'ice-result-screen' },   // 얼음땡
+    { btn: 'closeResultBtn', screen: 'resultBoard' }                // 좀비
+];
+
+resultCloseMap.forEach(item => {
+    const btnEl = document.getElementById(item.btn);
+    const screenEl = document.getElementById(item.screen);
+    if (btnEl && screenEl) {
+        // 기존 이벤트 제거 (중복 방지)
+        const newBtn = btnEl.cloneNode(true);
+        btnEl.parentNode.replaceChild(newBtn, btnEl);
+
+        newBtn.addEventListener('click', () => {
+            screenEl.style.display = 'none';
+        });
     }
 });
