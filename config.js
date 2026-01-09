@@ -50,6 +50,13 @@ const MAP_SIZES = {
     L_RECT: { width: 60, height: 45 }
 };
 
+// [New] Target Population for Voting Recommendations
+const TARGET_POPULATION = {
+    S: { TAG: 4, ZOMBIE: 8, BOMB: 6, ICE: 6 },
+    M: { TAG: 10, ZOMBIE: 16, BOMB: 10, ICE: 12 },
+    L: { TAG: 20, ZOMBIE: 32, BOMB: 16, ICE: 20 }
+};
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         PORT,
@@ -64,7 +71,8 @@ if (typeof module !== 'undefined' && module.exports) {
         WS_TICK_RATE,
         ITEM_SPAWN_INTERVAL,
         MAP_SIZES,
-        BOT_PERSONALITIES
+        BOT_PERSONALITIES,
+        TARGET_POPULATION
     };
 } else {
     // Browser global
@@ -77,4 +85,5 @@ if (typeof module !== 'undefined' && module.exports) {
     window.COLS = COLS;
     window.BOT_PERSONALITIES = BOT_PERSONALITIES;
     window.ITEM_TYPES = ITEM_TYPES;
+    window.TARGET_POPULATION = TARGET_POPULATION;
 }

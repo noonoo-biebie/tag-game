@@ -777,9 +777,18 @@ if (closeIceResultBtn) {
 
 // [통계] 결과 화면 표시
 socket.on('gameResult', (data) => {
+    // 0. 초기화: 모든 결과창 숨기기
+    const boards = [
+        document.getElementById('resultBoard'),
+        document.getElementById('tag-result-screen'),
+        document.getElementById('ice-result-screen'),
+        document.getElementById('bomb-result-screen')
+    ];
+    boards.forEach(b => { if (b) b.style.display = 'none'; });
+
     const board = document.getElementById('resultBoard');
     if (board) {
-        board.style.display = 'flex'; // Flex로 보여주기
+        // board.style.display = 'flex'; // [Removed] 무조건 표시되는 버그 수정
 
         // 1. 승자 타입에 따른 타이틀 및 UI 전환
         const h1 = board.querySelector('h1');
@@ -860,8 +869,48 @@ socket.on('gameResult', (data) => {
             board.style.display = 'none';
             return;
         }
+        // [New] Tag Mode Stats Result
+        if (data.mode === 'TAG_STATS') {
+            const tagBoard = document.getElementById('tag-result-screen');
+            if (tagBoard) {
+                tagBoard.style.display = 'flex';
+                // [Fix] 다른 결과창 강제 숨김 (중복 방지)
+                const otherBoard = document.getElementById('resultBoard');
+                if (otherBoard) otherBoard.style.display = 'none';
+
+                // 데이터 바인딩
+                const setVal = (id, valData) => {
+                    const elName = document.getElementById(id);
+                    const elVal = document.getElementById(id.replace('rank', 'val')); // e.g., tag-val-victim
+                    if (elName && valData) elName.innerText = valData.name;
+                    if (elVal && valData) elVal.innerText = valData.val;
+                };
+
+                setVal('tag-rank-victim', data.categories.victim);
+                setVal('tag-rank-host', data.categories.host);
+                setVal('tag-rank-collector', data.categories.collector);
+                setVal('tag-rank-ninja', data.categories.ninja);
+
+                // 닫기 버튼 이벤트
+                const closeBtn = document.getElementById('tag-result-close-btn');
+                if (closeBtn) {
+                    closeBtn.onclick = () => {
+                        tagBoard.style.display = 'none';
+                    };
+                }
+
+                // 10초 후 자동 닫기
+                setTimeout(() => {
+                    if (tagBoard) tagBoard.style.display = 'none';
+                }, 10000);
+            }
+            return; // 기존 로직 중단
+        }
         // [Zombie Mode]
-        else if (data.winner === 'survivors') {
+        else if (data.winner === 'survivors' || data.winner === 'zombies') {
+            // [Fix] 좀비/생존자 승리 시에만 결과창 표시
+            board.style.display = 'flex';
+
             const infoGrid = document.querySelector('.result-info-grid');
             if (infoGrid) infoGrid.style.display = 'grid'; // 좀비모드면 보이기
 
@@ -939,6 +988,13 @@ socket.on('gameResult', (data) => {
             }
         }, 1000);
     }
+
+    // [New] 모든 결과창 10초 후 자동 닫기 (투표 화면 노출용)
+    setTimeout(() => {
+        const board = document.getElementById('resultBoard');
+        if (board) board.style.display = 'none';
+    }, 10000);
+
 });
 
 socket.on('connect', () => {
@@ -973,12 +1029,14 @@ socket.on('latency', (startTime) => {
 
 // --- Voting System ---
 const votingScreen = document.getElementById('voting-screen');
+const votingBackdrop = document.getElementById('voting-backdrop'); // [New]
 const cardsContainer = document.getElementById('map-cards-container');
 const timerDiv = document.getElementById('voting-timer');
 
 socket.on('votingStart', (data) => {
     // UI 표시
-    votingScreen.style.display = 'block';
+    votingScreen.style.display = 'flex';
+    if (votingBackdrop) votingBackdrop.style.display = 'block';
     cardsContainer.innerHTML = '';
     myVote = null;
 
@@ -1068,6 +1126,7 @@ socket.on('votingEnd', (data) => {
     // UI 숨김 (잠시 후)
     setTimeout(() => {
         votingScreen.style.display = 'none';
+        if (votingBackdrop) votingBackdrop.style.display = 'none';
     }, 3000);
 });
 

@@ -28,7 +28,8 @@ const {
     SERVER_TICK_RATE,
     WS_TICK_RATE,
     ITEM_SPAWN_INTERVAL,
-    MAP_SIZES // [추가]
+    MAP_SIZES,
+    TARGET_POPULATION // [New] for Voting Recommendations
 } = require('./config');
 
 const mapLoader = require('./map_loader'); // [변경] 전체 모듈 가져오기
@@ -194,12 +195,18 @@ const VotingManager = {
             const randomIndex = Math.floor(Math.random() * availableMaps.length);
             const map = availableMaps.splice(randomIndex, 1)[0]; // 뽑고 제거
 
+            // [Safety] TARGET_POPULATION에 없는 사이즈 키가 올 경우 M으로 대체
+            const size = map.allowedSizes ? map.allowedSizes[map.allowedSizes.length - 1] : 'M';
+            const popConfig = TARGET_POPULATION[size] || TARGET_POPULATION['M'];
+            const targetCount = popConfig[selectedMode] || 8;
+
             mapCandidates.push({
                 id: i, // 0, 1, 2
                 type: 'MAP',
                 name: map.name,
-                size: map.allowedSizes ? map.allowedSizes[map.allowedSizes.length - 1] : 'M',
-                mode: selectedMode // 선택된 모드 전달
+                size: size,
+                mode: selectedMode, // 선택된 모드 전달
+                targetCount: targetCount
             });
         }
 
@@ -436,6 +443,9 @@ function checkItemCollection(playerId) {
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < 30) {
+            // [Stats] 아이템 획득 카운트
+            if (player.stats) player.stats.itemCount = (player.stats.itemCount || 0) + 1;
+
             // [버그 수정] 실드 사용 중 아이템 획득 시 실드 해제
             if (player.hasShield) {
                 player.hasShield = false;
@@ -717,6 +727,9 @@ function checkCollision(moverId) {
                     io.emit('gameMessage', `[${target.nickname}] 님이 술래가 되었습니다!`);
                     io.emit('tagOccurred', { newTaggerId: taggerId });
                     console.log(`태그 발생: ${mover.nickname} -> ${target.nickname}`);
+
+                    // [Stats] 잡힘 카운트
+                    if (players[targetId].stats) players[targetId].stats.caughtCount = (players[targetId].stats.caughtCount || 0) + 1;
                     break;
                 }
             }
@@ -971,24 +984,42 @@ function startRoundTimer(seconds) {
 
             if (gameMode === 'TAG') {
                 // [TAG Mode] 시간 종료 -> 투표
-                io.emit('gameMessage', '⏰ 시간 종료! 다음 맵 투표를 진행합니다.');
+                io.emit('gameMessage', '⏰ 시간 종료! 통계를 집계 중입니다...');
 
-                // 결과 데이터 전송 (술래가 못 잡았나? 그냥 종료?)
-                // 간단히 현재 생존자/술래 보여주고 종료
-                const ids = Object.keys(players);
-                const survivors = ids.filter(id => id !== taggerId && !players[id].isSpectator);
-                const survivorNames = survivors.map(id => players[id].nickname);
+                // [New] 통계 계산 로직
+                // 1. 필요한 데이터 추출
+                const ids = Object.keys(players).filter(id => !players[id].isSpectator);
+                const stats = ids.map(id => {
+                    const p = players[id];
+                    return {
+                        nickname: p.nickname,
+                        caught: p.stats?.caughtCount || 0, // 많이 잡힘 (동네북)
+                        taggerTime: p.stats?.taggerTime || 0, // 술래 시간 (술래왕 - 피하고 싶은..)
+                        items: p.stats?.itemCount || 0, // 아이템 (수집가)
+                        distance: p.stats?.distance || 0 // 이동 거리 (닌자)
+                    };
+                });
+
+                // 2. 각 부문별 1위 선정
+                const mostCaught = [...stats].sort((a, b) => b.caught - a.caught)[0];
+                const longestTagger = [...stats].sort((a, b) => b.taggerTime - a.taggerTime)[0];
+                const mostItems = [...stats].sort((a, b) => b.items - a.items)[0];
+                const mostDistance = [...stats].sort((a, b) => b.distance - a.distance)[0]; // Ninja
 
                 const resultData = {
-                    winner: 'time_over',
-                    survivorList: survivorNames,
-                    host: players[taggerId] ? players[taggerId].nickname : '-'
+                    mode: 'TAG_STATS', // 클라이언트 분기용
+                    categories: {
+                        victim: mostCaught && mostCaught.caught > 0 ? { name: mostCaught.nickname, val: mostCaught.caught + '회' } : { name: '-', val: '-' },
+                        host: longestTagger && longestTagger.taggerTime > 0 ? { name: longestTagger.nickname, val: (longestTagger.taggerTime / 20).toFixed(1) + '초' } : { name: '-', val: '-' }, // 20 ticks = 1s
+                        collector: mostItems && mostItems.items > 0 ? { name: mostItems.nickname, val: mostItems.items + '개' } : { name: '-', val: '-' },
+                        ninja: mostDistance && mostDistance.distance > 0 ? { name: mostDistance.nickname, val: Math.floor(mostDistance.distance) + 'px' } : { name: '-', val: '-' }
+                    }
                 };
+
                 io.emit('gameResult', resultData);
 
-                // 10초 후 투표 시작
-                // [Modified] 결과창과 동시에 투표 시작
-                setTimeout(() => startVotingPhase(), 500);
+                // [Modified] 결과창과 동시에 투표 시작 (즉시)
+                startVotingPhase();
 
             } else if (gameMode === 'ZOMBIE') {
                 // [생존자 승리]
@@ -1026,7 +1057,8 @@ function startRoundTimer(seconds) {
                 io.emit('gameResult', resultData);
 
                 // 10초 후 투표 시작
-                setTimeout(() => startVotingPhase(), 10000);
+                // 10초 후 투표 시작 -> [Modified] 즉시 시작 (결과창 뒤)
+                startVotingPhase();
 
             } else if (gameMode === 'ICE') {
                 // [얼음땡 도망자 승리] (시간 초과)
@@ -1061,7 +1093,14 @@ function createBot() {
     bot.targetY = spawn.y;
 
     // [통계] 봇 통계 초기화
-    bot.stats = { distance: 0, infectionCount: 0, survivalTime: 0 };
+    bot.stats = {
+        distance: 0,
+        infectionCount: 0,
+        survivalTime: 0,
+        caughtCount: 0,
+        itemCount: 0,
+        taggerTime: 0
+    };
 
     // 성격 설정 (봇 밸런싱) - bot.js 내부 로직 활용하지만 여기서 players 넘겨주면 더 좋음
     // Bot 생성자 내 getRandomPersonality는 인자 없으면 랜덤.
@@ -1978,27 +2017,34 @@ setTimeout(() => {
 setInterval(() => {
     try {
         Object.keys(players).forEach(id => {
-            if (players[id] instanceof Bot) {
+            const p = players[id];
+
+            // [Stats] 술래 시간 측정 (TAG 모드)
+            if (gameMode === 'TAG' && id === taggerId) {
+                if (p.stats) p.stats.taggerTime = (p.stats.taggerTime || 0) + 1;
+            }
+
+            if (p instanceof Bot) {
                 // [중요] 봇에게 게임 state와 callback 전달
                 // gameMode 추가 전달 (BOMB 모드면 bombHolderId를 술래로 취급)
                 const currentTaggerId = (gameMode === 'BOMB') ? bombHolderId : taggerId;
 
-                players[id].update(players, currentTaggerId, lastTaggerId, {
+                p.update(players, currentTaggerId, lastTaggerId, {
                     handleItemEffect: handleItemEffect,
                     handleBotAction: handleBotAction
                 }, currentMapData, gameMode);
 
                 // 동기화
-                io.emit('playerMoved', players[id]);
+                io.emit('playerMoved', p);
                 checkCollision(id);
                 checkItemCollection(id);
                 checkTrapCollision(id);
 
                 // [Fix] 바나나(isSlipped) 상태 해제 체크
-                if (players[id].isSlipped && players[id].slipStartTime) {
-                    if (Date.now() - players[id].slipStartTime > 3000) {
-                        players[id].isSlipped = false;
-                        players[id].slipStartTime = 0;
+                if (p.isSlipped && p.slipStartTime) {
+                    if (Date.now() - p.slipStartTime > 3000) {
+                        p.isSlipped = false;
+                        p.slipStartTime = 0;
                     }
                 }
             }
@@ -2296,7 +2342,9 @@ function sendIceResult(winnerType) {
         io.emit('gameMessage', '🎉 도망자 승리! 술래를 피해 살아남았습니다! 🎉');
     }
 
-    setTimeout(() => startVotingPhase(), 10000);
+    // [Fix] 투표 화면 전환 (즉시 시작) - 결과창이 덮고 있음
+    console.log("[ICE] Round End. Starting Voting immediately.");
+    startVotingPhase();
 }
 
 // [New] 얼음땡에서 도망자 간 땡(Thaw) 로직

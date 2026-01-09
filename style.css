@@ -1,4 +1,4 @@
-﻿@charset "UTF-8";
+@charset "UTF-8";
 
 /* Reset & Basic Setup */
 * {
@@ -505,6 +505,29 @@ canvas {
     pointer-events: none;
 }
 
+/* [New] Voting Backdrop (가림막) */
+#voting-backdrop {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    /* 투표 중에는 반투명 */
+    z-index: 5900;
+    /* 투표창(6000) 바로 아래 */
+}
+
+/* [Fix] Result Screens Z-Index Layering */
+#resultBoard,
+#bomb-result-screen,
+#ice-result-screen,
+#tag-result-screen {
+    z-index: 7000;
+    /* Higher than Voting Screen (6000) */
+}
+
 /* [New] UI Layer (Overlay Container) */
 #ui-layer {
     position: absolute;
@@ -519,33 +542,59 @@ canvas {
 
 #ui-layer>* {
     pointer-events: auto;
+    pointer-events: auto;
     /* Re-enable clicks for children like buttons */
+}
+
+/* [New] Voting Backdrop */
+#voting-backdrop {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 5900;
 }
 
 /* [New] Voting Screen */
 #voting-screen {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    /* [Modified] Modal Style (Center, not full screen) */
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    display: none;
+    /* Flex via JS */
+
+    width: auto;
+    height: auto;
+    min-width: 600px;
+    max-width: 90%;
+
     background: rgba(44, 62, 80, 0.95);
     padding: 30px;
-    border-radius: 15px;
+    border-radius: 20px;
     border: 3px solid #f1c40f;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-    text-align: center;
-    color: white;
-    z-index: 6000;
-    min-width: 300px;
+    box-shadow: 0 10px 50px rgba(0, 0, 0, 0.8);
+
+    /* Flexbox centering */
     display: none;
-    /* JS will toggle this */
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+
+    z-index: 6000;
+    color: white;
 }
 
-#map-cards-container {
-    display: flex;
-    gap: 15px;
-    justify-content: center;
-    margin: 20px 0;
+
+
+display: flex;
+gap: 15px;
+justify-content: center;
+margin: 20px 0;
 }
 
 .map-card {

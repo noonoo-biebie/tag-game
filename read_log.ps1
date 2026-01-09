@@ -1,0 +1,1 @@
+Get-Content debug.log

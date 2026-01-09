@@ -171,6 +171,54 @@
             style="margin-top: 30px; padding: 15px 40px; font-size: 1.5rem; background: #3498db; color: white; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);">닫기</button>
     </div>
 
+    <!-- [New] 술래잡기(Tag) 모드 통계 결과판 -->
+    <div id="tag-result-screen"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 8000; flex-direction: column; align-items: center; justify-content: center;">
+
+        <h1 style="color: #e67e22; font-size: 3rem; margin-bottom: 20px; text-shadow: 0 0 20px #d35400;">
+            🏁 게임 종료! (통계)
+        </h1>
+
+        <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; width: 90%;">
+
+            <!-- 1. 동네북 (가장 많이 잡힘) -->
+            <div class="award-card" style="background: linear-gradient(135deg, #7f8c8d, #95a5a6);">
+                <div class="award-icon">🤕</div>
+                <div class="award-title">동네북 (최다 잡힘)</div>
+                <div id="tag-rank-victim" class="award-name">-</div>
+                <div id="tag-val-victim" class="award-val">0회</div>
+            </div>
+
+            <!-- 2. 술래왕 (가장 오래 술래) -->
+            <div class="award-card" style="background: linear-gradient(135deg, #c0392b, #e74c3c);">
+                <div class="award-icon">👹</div>
+                <div class="award-title">술래왕 (최장 술래)</div>
+                <div id="tag-rank-host" class="award-name">-</div>
+                <div id="tag-val-host" class="award-val">0초</div>
+            </div>
+
+            <!-- 3. 수집가 (아이템 최다) -->
+            <div class="award-card" style="background: linear-gradient(135deg, #f1c40f, #f39c12);">
+                <div class="award-icon">🎒</div>
+                <div class="award-title">수집가 (아이템)</div>
+                <div id="tag-rank-collector" class="award-name">-</div>
+                <div id="tag-val-collector" class="award-val">0개</div>
+            </div>
+
+            <!-- 4. 닌자 (최다 이동) -->
+            <div class="award-card" style="background: linear-gradient(135deg, #8e44ad, #9b59b6);">
+                <div class="award-icon">🥷</div>
+                <div class="award-title">닌자 (최다 이동)</div>
+                <div id="tag-rank-ninja" class="award-name">-</div>
+                <div id="tag-val-ninja" class="award-val">0px</div>
+            </div>
+
+        </div>
+
+        <button id="tag-result-close-btn"
+            style="margin-top: 30px; padding: 15px 40px; font-size: 1.5rem; background: #e67e22; color: white; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 5px 15px rgba(230, 126, 34, 0.4);">닫기</button>
+    </div>
+
     <!-- 스타일 추가 (임시) -->
     <style>
         .award-card {
@@ -269,14 +317,28 @@
                 <button id="start-btn">게임 시작</button>
             </div>
 
+            <!-- [New] Voting Backdrop -->
+            <div id="voting-backdrop"></div>
             <!-- [New] Voting Screen -->
-            <div id="voting-screen" style="display: none;">
-                <h2>🗳️ 다음 맵 투표 🗳️</h2>
-                <div id="voting-timer">남은 시간: 15초</div>
-                <div id="map-cards-container">
-                    <!-- Cards will be injected by JS -->
+            <!-- [Restore] Voting Screen -->
+            <!-- [Restore] Voting Screen -->
+            <div id="voting-screen">
+
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="font-size: 2.5rem; margin-bottom: 10px; text-shadow: 0 0 10px #3498db;">📊 다음 게임 모드 투표
+                    </h2>
+                    <div id="voting-timer" style="font-size: 1.5rem; color: #f1c40f; font-weight: bold;">남은 시간: 15초
+                    </div>
                 </div>
-                <div id="voting-status">투표를 진행해 주세요!</div>
+
+                <div id="map-cards-container"
+                    style="display: flex; gap: 20px; justify-content: center; align-items: stretch; flex-wrap: wrap; width: 90%; max-width: 1200px;">
+                    <!-- Map Cards will be injected here by JS -->
+                </div>
+
+                <div id="vote-status-msg" style="margin-top: 30px; font-size: 1.2rem; color: #bdc3c7;">
+                    카드를 클릭하여 투표하세요!
+                </div>
             </div>
 
             <!-- 2. HUD (In-Game) -->
