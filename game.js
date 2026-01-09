@@ -1142,6 +1142,14 @@ socket.on('votingEnd', (data) => {
 
 
 
+// [New] 라운드 업데이트 핸들러
+socket.on('roundUpdate', (data) => {
+    // HUD에 라운드 정보 업데이트
+    // game.js drawHUD에서 사용할 전역 변수 업데이트
+    currentRoundInfo = data; // { current, total }
+    console.log(`[Client] Round Updated: ${data.current} / ${data.total}`);
+});
+
 // [New] Explicit Game Mode Update Handler
 socket.on('gameMode', (mode) => {
     if (gameMode !== mode) {
@@ -1424,6 +1432,7 @@ function drawPlayers() {
         } else if (p.isZombie) {
             ctx.fillStyle = '#2ecc71'; // 좀비: 초록
         } else {
+            // [Revert] User feedback: Keep it white to avoid confusion with tagger
             ctx.fillStyle = '#fff'; // 생존자: 하양
         }
 
@@ -2019,6 +2028,9 @@ window.addEventListener('keydown', (e) => {
 function drawHUD() {
     if (!isJoined) return;
 
+    // [Removed] Common Round Display (Moved to Status Box)
+    // if (typeof currentRoundInfo !== 'undefined' && currentRoundInfo.current) { ... }
+
     // [Common] Ping Display (Bottom Right) -> Moved to DOM (#ping-display)
 
 
@@ -2026,7 +2038,7 @@ function drawHUD() {
     if (gameMode === 'BOMB') {
         const padding = 10;
         const boxWidth = 140;
-        const boxHeight = 100;
+        const boxHeight = 130; // [Modified] Increase height for Round Info
         const x = canvas.width - boxWidth - padding;
         const y = padding + 25; // 접속자 수 아래로 내림
 
@@ -2047,13 +2059,19 @@ function drawHUD() {
         let dead = 0;
         Object.values(players).forEach(p => { if (p.isSpectator) dead++; else survivors++; });
 
+        // [New] Round Info (Top)
+        if (typeof currentRoundInfo !== 'undefined' && currentRoundInfo.current) {
+            ctx.fillStyle = '#fff';
+            ctx.fillText(`ROUND ${currentRoundInfo.current}/${currentRoundInfo.total}`, textX, textY);
+        }
+
         ctx.fillStyle = '#fff';
-        ctx.fillText(`🔥 생존: ${survivors}명`, textX, textY);
+        ctx.fillText(`🔥 생존: ${survivors}명`, textX, textY + 25);
         ctx.fillStyle = '#7f8c8d';
-        ctx.fillText(`👻 탈락: ${dead}명`, textX, textY + 30);
+        ctx.fillText(`👻 탈락: ${dead}명`, textX, textY + 50);
 
         ctx.fillStyle = '#e74c3c';
-        ctx.fillText(`💣 Bomb Mode`, textX, textY + 60);
+        ctx.fillText(`💣 Bomb Mode`, textX, textY + 75);
         return;
     }
 
@@ -2061,7 +2079,7 @@ function drawHUD() {
     if (gameMode === 'TAG') {
         const padding = 10;
         const boxWidth = 180; // [수정] 너비 여유 있게
-        const boxHeight = 50;
+        const boxHeight = 80; // [Modified] Increase height
         const x = canvas.width - boxWidth - padding;
         const y = padding + 25;
 
@@ -2086,8 +2104,15 @@ function drawHUD() {
         const sec = gameTime % 60;
         const timeStr = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
 
+        // [New] Round Display (Top)
+        if (typeof currentRoundInfo !== 'undefined' && currentRoundInfo.current) {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px "Noto Sans KR", sans-serif';
+            ctx.fillText(`ROUND ${currentRoundInfo.current}/${currentRoundInfo.total}`, centerX, centerY - 25);
+        }
+
         ctx.fillStyle = '#f1c40f';
-        ctx.fillText(`⏱️ 남은 시간: ${timeStr}`, centerX, centerY);
+        ctx.fillText(`⏱️ 남은 시간: ${timeStr}`, centerX, centerY + 5);
         return;
     }
 
@@ -2138,14 +2163,22 @@ function drawHUD() {
         const sec = gameTime % 60;
         const timeStr = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
 
+        // [New] Round Info (Top)
+        if (typeof currentRoundInfo !== 'undefined' && currentRoundInfo.current) {
+            ctx.fillStyle = '#fff';
+            ctx.fillText(`ROUND ${currentRoundInfo.current}/${currentRoundInfo.total}`, textX, textY);
+            // 다른 텍스트들 아래로 밀기 위해 임시 변수 사용하거나 하드코딩 조정
+            // 간단하게: Round가 있으면 아래 좌표들에 +25
+        }
+
         ctx.fillStyle = '#f1c40f';
-        ctx.fillText(`⏱️ 남은 시간: ${timeStr}`, textX, textY);
+        ctx.fillText(`⏱️ 남은 시간: ${timeStr}`, textX, textY + 25);
 
         ctx.fillStyle = '#fff';
-        ctx.fillText(`🏃 도망자: ${runners}명`, textX, textY + 30);
+        ctx.fillText(`🏃 도망자: ${runners}명`, textX, textY + 50);
 
         ctx.fillStyle = '#3498db'; // Ice Color
-        ctx.fillText(`❄️ 얼음: ${frozen}명`, textX, textY + 60);
+        ctx.fillText(`❄️ 얼음: ${frozen}명`, textX, textY + 75);
 
         return;
     }
@@ -2161,7 +2194,7 @@ function drawHUD() {
 
     const padding = 10;
     const boxWidth = 140;
-    const boxHeight = 100; // [수정] 높이 증가
+    const boxHeight = 130; // [Modified] Increase height
     const x = canvas.width - boxWidth - padding;
     const y = padding;
 
@@ -2179,18 +2212,24 @@ function drawHUD() {
     const textX = x + 15;
     const textY = y + 15;
 
+    // [New] Round Info (Top)
+    if (typeof currentRoundInfo !== 'undefined' && currentRoundInfo.current) {
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`ROUND ${currentRoundInfo.current}/${currentRoundInfo.total}`, textX, textY);
+    }
+
     ctx.fillStyle = '#fff';
-    ctx.fillText(`👥 인간: ${survivors}`, textX, textY);
+    ctx.fillText(`👥 인간: ${survivors}`, textX, textY + 25);
 
     ctx.fillStyle = '#2ecc71';
-    ctx.fillText(`🧟 좀비: ${zombies}`, textX, textY + 30);
+    ctx.fillText(`🧟 좀비: ${zombies}`, textX, textY + 50);
 
     // 타이머 표시
     ctx.fillStyle = '#f1c40f';
     const min = Math.floor(gameTime / 60);
     const sec = gameTime % 60;
     const timeStr = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
-    ctx.fillText(`⏱️ 시간: ${timeStr}`, textX, textY + 60);
+    ctx.fillText(`⏱️ 시간: ${timeStr}`, textX, textY + 75);
 }
 
 // [추가] 미니맵 기능 구현

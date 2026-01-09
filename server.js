@@ -271,18 +271,24 @@ const GameRules = {
     ICE: {
         onRoundStart: () => {
             // 얼음땡 술래 선정
+            console.log('[ICE] Round Start Logic Initiated');
             const candidateIds = Object.keys(players).filter(id => !players[id].isSpectator);
-            if (candidateIds.length > 0) {
+
+            if (candidateIds.length > 1) { // 최소 2명 필요
                 taggerId = getSmartTagger(candidateIds);
+                console.log(`[ICE] Tagger Selected: ${taggerId} (${players[taggerId]?.nickname})`);
+
                 io.emit('updateTagger', taggerId);
                 io.emit('gameMessage', `🧊 [${players[taggerId].nickname}] 님이 술래입니다! 도망가세요!`);
 
-                // 아이템 지급 및 초기화
+                // 아이템 지급 및 초기화 (Batch update capability missing, loop is fine for now)
                 Object.keys(players).forEach(id => {
                     const p = players[id];
+                    // 상태 초기화
                     p.isFrozen = false;
                     p.isStunned = false;
                     p.iceCooldown = 0;
+
                     if (id !== taggerId && !p.isSpectator) {
                         p.hasItem = 'ice';
                         io.to(id).emit('updateInventory', 'ice');
@@ -290,13 +296,19 @@ const GameRules = {
                         p.hasItem = null;
                         io.to(id).emit('updateInventory', null);
                     }
-                    io.emit('playerMoved', p);
+                    // 개별 emit 대신 전체 동기화가 더 효율적일 수 있음.
+                    // io.emit('playerMoved', p); -> 트래픽 과다. 
+                    // 하지만 상태 변경을 알려야 하므로 유지하되, 전체 루프 후 한번에 알리는게 나음.
                 });
+
+                // [Optimization] 전체 플레이어 상태 한 번에 전송
+                io.emit('currentPlayers', players);
 
                 // 얼음땡 타이머 (3분 = 180초)
                 startRoundTimer(180);
             } else {
-                io.emit('gameMessage', '⚠️ 플레이어가 부족합니다.');
+                console.log('[ICE] Not enough players.');
+                io.emit('gameMessage', '⚠️ 플레이어가 부족합니다 (최소 2명).');
                 setTimeout(() => startVotingPhase(), 3000);
             }
         }
@@ -412,19 +424,18 @@ GameRules.ICE.onCollision = (mover, target) => {
     }
 
     if (tagger && runner) {
-        // Tag Logic: Runner touches Tagger (Elimination)
+        // Tag Logic: Runner touches Tagger (Freeze)
         if (runner.isSpectator) return;
-        if (runner.isFrozen) return; // Frozen logic handled separate? Or immune?
+        if (runner.isFrozen) return; // 이미 얼어있으면 면역
 
-        runner.isSpectator = true;
-        runner.isEliminated = true;
-        runner.hasItem = null;
-        io.to(runner.id).emit('updateInventory', null);
-        runner.color = 'rgba(255, 255, 255, 0.3)';
+        // [Fix] 탈락 대신 얼음 상태로 전환
+        runner.isFrozen = true;
+        runner.isStunned = true; // 움직임 불가
+        runner.color = 'aqua'; // Visual Feedback
 
         io.emit('playerMoved', runner);
-        io.emit('gameMessage', `💀 [${runner.nickname}] 탈락!`);
-        io.emit('effect', { type: 'die', x: runner.x, y: runner.y });
+        io.emit('gameMessage', `❄️ [${runner.nickname}] 님이 얼어붙었습니다!`);
+        io.emit('effect', { type: 'freeze', x: runner.x, y: runner.y });
 
         checkIceWin();
     } else {
@@ -560,6 +571,17 @@ const VotingManager = {
         if (serverState !== ServerState.VOTING) return;
         this.votes[socketId] = candidateId;
         io.emit('updateVotes', this.getVoteCounts());
+
+        // [New] 모든 플레이어가 투표했으면 즉시 종료
+        const currentPlayersCount = Object.keys(players).filter(id => !players[id].isSpectator && !players[id].isManualSpectator && !players[id].nickname.startsWith('Bot')).length;
+        // 봇 제외, 실제 플레이어 수와 투표 수 비교
+        // (단, 접속 중인 유저 수 기준으로 해야 더 정확할 수 있음. 현재는 players에 봇 포함이므로 필터링 필요)
+        const realUserCount = Object.values(players).filter(p => !(p instanceof Bot)).length;
+
+        if (Object.keys(this.votes).length >= realUserCount && realUserCount > 0) {
+            io.emit('gameMessage', '⚡ 모든 플레이어가 투표했습니다! 즉시 결과를 공개합니다.');
+            this.end();
+        }
     },
 
     getVoteCounts: function () {
@@ -653,6 +675,8 @@ function applyGameSettings(settings) {
         gameMode = settings.mode || 'TAG';
 
         // [Fix] 모든 모드에 대해 resetGame 호출하여 게임 시작
+        // [New] 새 게임 시작이므로 라운드 초기화
+        currentRound = 1;
         resetGame();
 
         // ResetGame이 state를 Free로 둘 수 있으므로 강제 PLAYING
@@ -1037,7 +1061,7 @@ function checkZombieWin() {
 
         // 타이머 중지 및 리셋 예약
         if (roundTimer) clearInterval(roundTimer);
-        setTimeout(() => resetGame(), 10000);
+        handleRoundEnd(); // [Fix] Use 5-Round System
 
     } else if (survivors.length > 0 && ids.length > 0) {
         // 생존자 수 알림용 (필요시)
@@ -1096,8 +1120,8 @@ function startRoundTimer(seconds) {
 
                 io.emit('gameResult', resultData);
 
-                // [Modified] 결과창과 동시에 투표 시작 (즉시)
-                startVotingPhase();
+                // [Modified] 5라운드 체크로 위임
+                handleRoundEnd();
 
             } else if (gameMode === 'ZOMBIE') {
                 // [생존자 승리]
@@ -1135,8 +1159,8 @@ function startRoundTimer(seconds) {
                 io.emit('gameResult', resultData);
 
                 // 10초 후 투표 시작
-                // 10초 후 투표 시작 -> [Modified] 즉시 시작 (결과창 뒤)
-                startVotingPhase();
+                // [Modified] 5라운드 체크로 위임
+                handleRoundEnd();
 
             } else if (gameMode === 'ICE') {
                 // [얼음땡 도망자 승리] (시간 초과)
@@ -1144,6 +1168,35 @@ function startRoundTimer(seconds) {
             }
         }
     }, 1000);
+}
+
+// [New] 5-Round System
+let currentRound = 1;
+const MAX_ROUNDS = 5;
+
+// [New] Round End Handler
+let isRoundEnding = false; // [Fix] Guard variable for re-entrancy
+
+function handleRoundEnd() {
+    // [Fix] 이미 종료 처리 중이면 무시
+    if (isRoundEnding) return;
+    isRoundEnding = true;
+
+    // 5초 대기 후 결정 (결과창 보는 시간)
+    setTimeout(() => {
+        isRoundEnding = false; // [Fix] Reset guard before next round starts
+        currentRound++;
+        if (currentRound <= MAX_ROUNDS) {
+            // 다음 라운드 진행
+            io.emit('gameMessage', `📢 ${currentRound} / ${MAX_ROUNDS} 라운드 시작!`);
+            io.emit('roundUpdate', { current: currentRound, total: MAX_ROUNDS });
+            resetGame();
+        } else {
+            // 모든 라운드 종료 -> 투표
+            currentRound = 1; // 초기화
+            startVotingPhase();
+        }
+    }, 5000); // 5초 대기
 }
 
 // [New] 투표 화면 전환 헬퍼
@@ -1205,11 +1258,17 @@ let resetRequesterId = null;
 
 
 function resetGame() {
+    isRoundEnding = false; // [Fix] Ensure round ending guard is reset
     if (roundTimer) clearInterval(roundTimer);
     // [버그 수정] 진행 중인 좀비 카운트다운 취소
     if (zombieSpawnTimer) {
         clearInterval(zombieSpawnTimer);
         zombieSpawnTimer = null;
+    }
+    // [Fix] Clear Universal Countdown Timer
+    if (universalCountdownTimer) {
+        clearInterval(universalCountdownTimer);
+        universalCountdownTimer = null;
     }
     roundTime = 0;
     io.emit('updateTimer', 0);
@@ -1291,6 +1350,9 @@ function resetGame() {
     bombHolderId = null;
     io.emit('updateTagger', null); // 클라이언트 술래 표시 해제
 
+    // [Safety] 얼음땡 모드 시작 시점에는 확실히 술래가 없어야 함 (카운트다운 동안)
+
+
     // 플레이어 재배치 및 초기화
     Object.keys(players).forEach(id => {
         const p = players[id];
@@ -1364,6 +1426,9 @@ function resetGame() {
 
     const msg = `🔄 게임 리셋! 모드: ${gameMode}`;
     io.emit('gameMessage', msg);
+
+    // [Fix] 라운드 정보 즉시 업데이트
+    io.emit('roundUpdate', { current: currentRound, total: MAX_ROUNDS });
 }
 
 // 소켓 IO
@@ -1430,11 +1495,12 @@ function handleJoinGame(socket, data) {
             isZombieStart = true;
             const zombieColors = ['#2ecc71', '#27ae60', '#00b894', '#55efc4', '#16a085'];
             initialColor = zombieColors[Math.floor(Math.random() * zombieColors.length)];
-        } else if (gameMode === 'BOMB' && bombEndTime > 0) {
-            // [폭탄 모드] 진행 중 난입 시 관전자
+        } else if ((gameMode === 'BOMB' && bombEndTime > 0) || (gameMode === 'ICE' && taggerId)) {
+            // [폭탄/얼음 모드] 진행 중 난입 시 관전자
             isSpectator = true;
             initialColor = 'rgba(255, 255, 255, 0.3)';
-            joinMsg = "💣 폭탄 모드 진행 중이라 관전자로 입장합니다.";
+            const modeName = gameMode === 'BOMB' ? '💣 폭탄' : '❄️ 얼음땡';
+            joinMsg = `${modeName} 모드 진행 중이라 관전자로 입장합니다.`;
         } else {
             // 태그 모드에서 난입하면 생존자(혹은 술래 없음 상태)
             isZombieStart = false;
@@ -1475,7 +1541,10 @@ function handleJoinGame(socket, data) {
         socket.emit('joinSuccess', players[socket.id]);
         socket.emit('mapUpdate', currentMapData); // 맵 데이터 전송
         socket.emit('gameMode', gameMode); // [추가]
-        socket.emit('currentPlayers', players);
+        socket.emit('currentPlayers', players);        // [Fix] 현재 라운드 정보 전달
+        socket.emit('roundUpdate', { current: currentRound, total: MAX_ROUNDS });
+
+        // 아이템 상태 전송
         socket.emit('updateItems', items);
         socket.emit('updateTraps', traps);
         socket.emit('updateTagger', taggerId);
@@ -1671,6 +1740,19 @@ function handleChatMessage(socket, msg) {
             socket.emit('gameMessage', failMsg);
             socket.emit('chatMessage', { nickname: 'System', message: failMsg, playerId: 'system' });
         }
+        return;
+    }
+
+    // [New] Cheat Command: Finish all rounds
+    if (cmd === '/finish') {
+        const finishMsg = `⚡ [${player.nickname}] 님이 강제로 모든 라운드를 종료했습니다!`;
+        io.emit('gameMessage', finishMsg);
+        io.emit('chatMessage', { nickname: 'System', message: finishMsg, playerId: 'system' });
+
+        // Force end
+        if (roundTimer) clearInterval(roundTimer);
+        currentRound = MAX_ROUNDS; // Set to max so handleRoundEnd triggers voting
+        handleRoundEnd(); // Will detect max rounds and go to voting
         return;
     }
 
@@ -2190,11 +2272,11 @@ function updateBombGame() {
                     ]
                 };
                 io.emit('gameResult', resultData);
-                setTimeout(() => startVotingPhase(), 500);
+                handleRoundEnd(); // [Fix] Use 5-Round System
             } else if (survivors.length === 0) {
                 // 모두 멸망? (동시 폭사 등)
                 io.emit('gameMessage', `💀 생존자가 없습니다... 게임 오버.`);
-                setTimeout(() => startVotingPhase(), 500);
+                handleRoundEnd(); // [Fix] Use 5-Round System
             } else {
                 // 다음 라운드 진행
                 io.emit('gameMessage', `생존자 ${survivors.length}명 남았습니다. 다음 라운드 준비...`);
@@ -2284,7 +2366,7 @@ function sendIceResult(winner) {
     });
 
     if (roundTimer) clearInterval(roundTimer);
-    startVotingPhase();
+    handleRoundEnd();
 }
 
 server.listen(PORT, () => {

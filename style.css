@@ -568,13 +568,16 @@ canvas {
     display: none;
     /* Flex via JS */
 
-    width: auto;
-    height: auto;
-    min-width: 600px;
-    max-width: 90%;
+    /* [Modified] Square-ish Aspect Ratio */
+    width: 600px;
+    height: 600px;
+    /* Fixed square height */
+    min-width: unset;
+    max-width: 90vw;
+    aspect-ratio: 1 / 1;
 
     background: rgba(44, 62, 80, 0.95);
-    padding: 30px;
+    padding: 20px;
     border-radius: 20px;
     border: 3px solid #f1c40f;
     box-shadow: 0 10px 50px rgba(0, 0, 0, 0.8);
@@ -593,14 +596,40 @@ canvas {
 
 
 
+/* [New] Voting Options Container (2x2 Grid) */
+/* [New] Voting Options Container (2x2 Grid) */
+#map-cards-container {
+    display: grid;
+    /* [Modified] Fixed size columns to prevent huge cards */
+    grid-template-columns: repeat(2, 160px);
+    justify-content: center;
+    /* Center the grid */
+    gap: 15px;
+    /* Gap between cards */
+    width: 100%;
+    margin-top: 20px;
+    margin-bottom: 20px;
+}
+
 .map-card {
     background: rgba(255, 255, 255, 0.1);
     border: 2px solid #bdc3c7;
     border-radius: 10px;
-    padding: 15px;
+    padding: 10px;
     cursor: pointer;
     transition: all 0.3s;
-    width: 120px;
+    /* [Modified] Explicit fixed size for stability */
+    width: 150px;
+    height: 150px;
+    /* aspect-ratio: 1 / 1; remove dependency */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    /* Padding 포함 */
+    margin: 0 auto;
+    /* Grid cell 내 중앙 정렬 */
 }
 
 .map-card:hover {

@@ -7,15 +7,40 @@ class Bot {
     constructor(id, mapData) {
         this.id = id;
         this.playerId = id; // 클라이언트 호환성
-        this.nickname = '🤖Bot_' + id.slice(0, 4);
+
+        // [Feature] Creative Bot Names
+        this.nickname = this.generateBotName();
         this.color = this.getRandomColor();
         this.personality = this.getRandomPersonality();
 
         const spawn = getRandomSpawn(mapData);
+        // ... (rest of constructor)
         this.x = spawn.x;
         this.y = spawn.y;
-        this.targetX = this.x; // 이동 목표
+        this.targetX = this.x;
         this.targetY = this.y;
+        // ...
+    }
+
+    generateBotName() {
+        const adjectives = [
+            '빠른', '느린', '배고픈', '신난', '졸린', '용감한', '겁쟁이', '똑똑한',
+            '수상한', '춤추는', '노래하는', '멍때리는', '점프하는', '화난', '행복한'
+        ];
+        const nouns = [
+            '다람쥐', '호랑이', '토끼', '거북이', '알파고', '로봇', '고양이', '강아지',
+            '너구리', '펭귄', '독수리', '햄스터', '코끼리', '치타', '두더지'
+        ];
+
+        const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+        const noun = nouns[Math.floor(Math.random() * nouns.length)];
+
+        // Add random number to avoid duplicates
+        const num = Math.floor(Math.random() * 99) + 1;
+        return `${adj} ${noun}${num}`;
+    }
+
+    getRandomColor() {
 
         // 상태
         this.hasItem = null;
@@ -54,7 +79,13 @@ class Bot {
     }
 
     getRandomColor() {
-        const colors = ['#e67e22', '#1abc9c', '#9b59b6', '#e84393', '#f1c40f', '#3498db'];
+        // [Modified] Expanded Vibrant Color Palette
+        const colors = [
+            '#e67e22', '#1abc9c', '#9b59b6', '#e84393', '#f1c40f', '#3498db', // Original
+            '#ff7675', '#74b9ff', '#55efc4', '#a29bfe', '#fd79a8', '#00b894', // Pastel & Mint
+            '#0984e3', '#6c5ce7', '#d63031', '#e17055', '#fdcb6e', '#00cec9', // Vivid
+            '#ff9ff3', '#feca57', '#ff6b6b', '#48dbfb', '#1dd1a1', '#5f27cd'  // Neon-ish
+        ];
         return colors[Math.floor(Math.random() * colors.length)];
     }
 
