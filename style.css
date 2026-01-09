@@ -591,11 +591,7 @@ canvas {
 
 
 
-display: flex;
-gap: 15px;
-justify-content: center;
-margin: 20px 0;
-}
+
 
 .map-card {
     background: rgba(255, 255, 255, 0.1);
@@ -617,4 +613,46 @@ margin: 20px 0;
     border-color: #2ecc71;
     background: rgba(46, 204, 113, 0.2);
     box-shadow: 0 0 15px #2ecc71;
+}
+
+/* [New] Result Screen Mobile Optimization */
+/* Force 2x2 Grid for Award Cards on Mobile */
+@media (max-width: 768px) {
+    #tag-result-screen .award-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        width: 100%;
+        justify-items: center;
+    }
+
+    #tag-result-screen .award-card {
+        width: 100%;
+        max-width: 150px;
+        /* 카드가 너무 커지지 않게 */
+        margin: 0;
+        min-height: 120px;
+        /* 높이 통일 */
+    }
+
+    /* 폰트 크기 조정 */
+    #tag-result-screen h1 {
+        font-size: 1.5rem;
+        margin-top: 10px;
+    }
+
+    #tag-result-screen h3 {
+        font-size: 1rem;
+    }
+
+    #tag-result-screen p {
+        font-size: 0.9rem;
+    }
+
+    /* 전체 결과판 패딩 줄임 */
+    .result-screen-content {
+        padding: 15px;
+        width: 95%;
+        max-width: none;
+    }
 }

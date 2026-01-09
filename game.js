@@ -1113,22 +1113,34 @@ socket.on('updateVotes', (counts) => {
     });
 });
 
+// [Fix] Add missing votingEnd handler
 socket.on('votingEnd', (data) => {
-    clearInterval(votingTimer);
-    timerDiv.innerText = "투표 종료! 결과 집계 중...";
+    if (votingTimer) clearInterval(votingTimer);
 
-    // [Bugfix] 클라이언트 게임 모드 즉시 갱신
+    // UI 업데이트
+    const timerDiv = document.getElementById('voting-timer');
+    if (timerDiv) timerDiv.innerText = "투표 종료! 결과 집계 중...";
+
+    // 모드 동기화
     if (data.mode) {
         gameMode = data.mode;
         console.log(`[Client] Game Mode Updated to: ${gameMode}`);
     }
 
-    // UI 숨김 (잠시 후)
+    // 투표창 닫기 (잠시 후)
     setTimeout(() => {
-        votingScreen.style.display = 'none';
+        const votingScreen = document.getElementById('voting-screen');
+        const votingBackdrop = document.getElementById('voting-backdrop');
+        if (votingScreen) votingScreen.style.display = 'none';
         if (votingBackdrop) votingBackdrop.style.display = 'none';
-    }, 3000);
+
+        // 결과판이 혹시 열려있으면 닫기
+        const results = document.querySelectorAll('.result-screen');
+        results.forEach(el => el.style.display = 'none');
+    }, 2000);
 });
+
+
 
 // [New] Explicit Game Mode Update Handler
 socket.on('gameMode', (mode) => {
