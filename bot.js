@@ -7,40 +7,16 @@ class Bot {
     constructor(id, mapData) {
         this.id = id;
         this.playerId = id; // 클라이언트 호환성
-
-        // [Feature] Creative Bot Names
-        this.nickname = this.generateBotName();
+        this.isBot = true; // [Fix] 명시적 봇 플래그
+        this.nickname = '🤖Bot_' + id.slice(0, 4);
         this.color = this.getRandomColor();
         this.personality = this.getRandomPersonality();
 
         const spawn = getRandomSpawn(mapData);
-        // ... (rest of constructor)
         this.x = spawn.x;
         this.y = spawn.y;
-        this.targetX = this.x;
+        this.targetX = this.x; // 이동 목표
         this.targetY = this.y;
-        // ...
-    }
-
-    generateBotName() {
-        const adjectives = [
-            '빠른', '느린', '배고픈', '신난', '졸린', '용감한', '겁쟁이', '똑똑한',
-            '수상한', '춤추는', '노래하는', '멍때리는', '점프하는', '화난', '행복한'
-        ];
-        const nouns = [
-            '다람쥐', '호랑이', '토끼', '거북이', '알파고', '로봇', '고양이', '강아지',
-            '너구리', '펭귄', '독수리', '햄스터', '코끼리', '치타', '두더지'
-        ];
-
-        const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
-        const noun = nouns[Math.floor(Math.random() * nouns.length)];
-
-        // Add random number to avoid duplicates
-        const num = Math.floor(Math.random() * 99) + 1;
-        return `${adj} ${noun}${num}`;
-    }
-
-    getRandomColor() {
 
         // 상태
         this.hasItem = null;
@@ -48,6 +24,10 @@ class Bot {
         this.isSpeeding = false;
         this.isSlipped = false; // 미끄러짐 상태 추가
         this.slipDir = { x: 0, y: 0 }; // 미끄러짐 방향
+
+        // [Fix] 누락된 상태 변수 초기화
+        this.isFrozen = false;
+        this.isZombie = false;
 
         // 기절 관련
         this.stunnedUntil = 0;
@@ -79,13 +59,7 @@ class Bot {
     }
 
     getRandomColor() {
-        // [Modified] Expanded Vibrant Color Palette
-        const colors = [
-            '#e67e22', '#1abc9c', '#9b59b6', '#e84393', '#f1c40f', '#3498db', // Original
-            '#ff7675', '#74b9ff', '#55efc4', '#a29bfe', '#fd79a8', '#00b894', // Pastel & Mint
-            '#0984e3', '#6c5ce7', '#d63031', '#e17055', '#fdcb6e', '#00cec9', // Vivid
-            '#ff9ff3', '#feca57', '#ff6b6b', '#48dbfb', '#1dd1a1', '#5f27cd'  // Neon-ish
-        ];
+        const colors = ['#e67e22', '#1abc9c', '#9b59b6', '#e84393', '#f1c40f', '#3498db'];
         return colors[Math.floor(Math.random() * colors.length)];
     }
 
@@ -241,7 +215,6 @@ class Bot {
         if (isChaser) {
             // 추격자: 보이는 가장 가까운 타겟 검색
             target = this.findBestTarget(players, lastTaggerId, mapData, gameMode);
-            // if (gameMode === 'BOMB' && isChaser && !target) console.log(`[Bot ${this.nickname}] 폭탄 들고 헤매는 중... (타겟 없음)`);
             if (target) canSee = true;
         } else {
             // 도망자: 가장 가까운 위협 검색
@@ -249,18 +222,25 @@ class Bot {
             if (gameMode === 'ZOMBIE') {
                 for (const pid in players) {
                     if (pid === this.id) continue;
-                    if (players[pid].isZombie) {
-                        const d = Math.hypot(players[pid].x - this.x, players[pid].y - this.y);
+                    const p = players[pid];
+                    if (!p) continue; // [Safety Check] 유효하지 않은 플레이어 건너뛰기
+
+                    if (p.isZombie) {
+                        const d = Math.hypot(p.x - this.x, p.y - this.y);
                         if (d < distToThreat) {
                             distToThreat = d;
-                            target = players[pid];
+                            target = p;
                         }
                     }
                 }
             } else {
                 if (taggerId && players[taggerId]) {
                     target = players[taggerId];
-                    distToThreat = Math.hypot(target.x - this.x, target.y - this.y);
+                    if (target) { // [Safety Check]
+                        distToThreat = Math.hypot(target.x - this.x, target.y - this.y);
+                    } else {
+                        target = null;
+                    }
                 }
             }
 
@@ -324,7 +304,7 @@ class Bot {
                 this.moveToDir(mapData);
             }
         } else {
-            // 3. 평소: 순찰
+            // 3. 아무것도 안 보임: 순찰(배회)
             this.doPatrol(mapData);
         }
     }
@@ -385,23 +365,38 @@ class Bot {
         if (!this.patrolTarget || this.isStuck) {
             this.patrolTarget = getRandomSpawn(mapData);
             this.isStuck = false;
+            // console.log(`[BotAI] ${this.nickname} New Patrol Target: ${this.patrolTarget.x},${this.patrolTarget.y}`);
         }
 
         const dist = Math.hypot(this.patrolTarget.x - this.x, this.patrolTarget.y - this.y);
 
         if (dist < 40) {
+            console.log(`[BotAI] ${this.nickname} Reached Target. Dist: ${dist}`);
             this.patrolTarget = null;
+            // this.moveDir = { x: 0, y: 0 }; // 도착해도 멈추지 말고 관성 유지 (자연스럽게)
         } else {
             const dx = this.patrolTarget.x - this.x;
             const dy = this.patrolTarget.y - this.y;
             const angle = Math.atan2(dy, dx);
             this.moveDir = { x: Math.cos(angle), y: Math.sin(angle) };
+
+            // [Debug] 이동 명령 확인 (5% 확률)
+            if (Math.random() < 0.05) console.log(`[BotAI] Moving phase. Dist:${dist.toFixed(1)} Dir:${this.moveDir.x.toFixed(2)},${this.moveDir.y.toFixed(2)}`);
+
             this.moveToDir(mapData);
         }
     }
 
     moveToDir(mapData) {
-        let speed = this.isSpeeding ? 25 : 15;
+        // [Safety] 맵 데이터 검증
+        if (!mapData || !mapData[0]) {
+            // console.warn('[Bot] Invalid mapData in moveToDir');
+            return;
+        }
+
+        // [Tuning] Player Speed ~24 (240px/s)
+        // 아주 살짝 느리게: 22~23
+        let speed = this.isSpeeding ? 30 : (this.isFleeing || this.chaseMemory ? 23 : 18);
 
         // [New] 진흙(Mud) 체크
         const TILE_SIZE = 32; // ensure TILE_SIZE is available or use this scope
@@ -424,8 +419,14 @@ class Bot {
 
         // [Spectator] 벽 무시
         if (!this.isSpectator) {
-            if (checkBotWallCollision(nextX, this.y, mapData)) hitX = true;
-            else this.x = nextX;
+            const collision = checkBotWallCollision(nextX, this.y, mapData);
+            if (collision) {
+                hitX = true;
+                // [Debug] 충돌 로그 (가끔 출력)
+                if (Math.random() < 0.01) console.log(`[BotDebug] Hit Wall X: ${nextX}, ${this.y} (Tile: ${mapData[Math.floor(this.y / 32)][Math.floor(nextX / 32)]})`);
+            } else {
+                this.x = nextX;
+            }
         } else {
             this.x = nextX;
         }

@@ -1020,8 +1020,14 @@ function checkCollision(moverId) {
 
 function checkZombieWin() {
     const ids = Object.keys(players);
-    const survivors = ids.filter(id => !players[id].isZombie);
+    // [Fix] 생존자 집계 시 관전자 제외 (좀비 승리 조건 버그 수정)
+    const survivors = ids.filter(id => !players[id].isZombie && !players[id].isSpectator);
     const zombies = ids.filter(id => players[id].isZombie);
+
+    console.log(`[ZombieCheck] Total: ${ids.length}, Zombies: ${zombies.length}, Survivors: ${survivors.length}`);
+    if (survivors.length > 0) {
+        console.log(`[ZombieCheck] Remaining Survivors: ${survivors.map(id => players[id].nickname).join(', ')}`);
+    }
 
     // 좀비 승리 조건: 생존자 0명 (단, 플레이어가 1명 이상일 때)
     if (survivors.length === 0 && ids.length > 0) {
@@ -2110,7 +2116,7 @@ setInterval(() => {
                 p.update(players, currentTaggerId, lastTaggerId, {
                     handleItemEffect: handleItemEffect,
                     handleBotAction: handleBotAction
-                }, currentMapData, gameMode);
+                }, currentMapData, gameMode, validSpawnPoints);
 
                 // 동기화
                 io.emit('playerMoved', p);
